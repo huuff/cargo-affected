@@ -246,11 +246,22 @@ fn renaming_a_file_from_crate_a_into_crate_b_prints_both() {
 }
 
 #[test]
-fn workspace_below_the_git_root_maps_files_correctly() {
+fn workspace_below_the_git_root_maps_its_files_and_lists_those_above_it_as_unmapped() {
     let fx = Fixture::new("basic", "ws");
     fx.write("ws/crates/a/src/lib.rs", "pub fn a() { /* edited */ }\n");
     fx.write("README.md", "# edited above the workspace\n");
-    assert_eq!(lines(&fx.run(&[])), ["a"]);
+    // A lockfile above the workspace root is not the workspace's Global File.
+    fx.write("Cargo.lock", "# not the workspace lockfile\n");
+    let out = fx.run(&["-v"]);
+    assert_eq!(lines(&out), ["a"]);
+    assert_eq!(
+        stderr(&out),
+        "\
+../Cargo.lock -> unmapped
+../README.md -> unmapped
+crates/a/src/lib.rs -> a (crate directory)
+"
+    );
 }
 
 #[test]

@@ -30,8 +30,9 @@ pub struct Report {
     /// without the graph.
     #[serde(skip)]
     pub dependents: BTreeMap<String, Vec<String>>,
-    /// Where each file of the Change Set under the workspace root landed, sorted by file;
-    /// what `-v` explains on stderr. Never serialised: it is a diagnostic, not a result.
+    /// Where each file of the Change Set landed, as paths relative to the workspace root
+    /// (a file above it starts with `..` and is unmapped), sorted by file; what `-v`
+    /// explains on stderr. Never serialised: it is a diagnostic, not a result.
     #[serde(skip)]
     pub file_outcomes: Vec<FileOutcome>,
 }

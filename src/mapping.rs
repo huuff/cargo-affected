@@ -3,7 +3,9 @@
 //! Each file lands as follows. A Global File is claimed by no crate, so a root package
 //! never owns the workspace manifest. Otherwise every crate whose Extra Path globs match
 //! claims the file, and so does the deepest crate whose directory contains it unless that
-//! crate's `ignore` globs exclude it. A file nobody claims is unmapped.
+//! crate's `ignore` globs exclude it. A file nobody claims is unmapped, and so is a file
+//! above the workspace root (given with leading `..`): no glob or crate directory is even
+//! tried against it.
 //!
 //! All globs are gitignore-style but anchored at their root: the workspace root for Global
 //! Files, the crate directory for `extra-paths` and `ignore`. `*` and `?` stay within one
@@ -269,21 +271,24 @@ impl Mapping {
     }
 }
 
-/// Maps each file as described in the module documentation.
-pub fn map_files<'a>(
+/// Maps each file, given relative to the workspace root, as described in the module
+/// documentation.
+pub fn map_files(
     crates: &[CrateDir],
     globals: &GlobalFiles,
-    files: impl IntoIterator<Item = &'a Path>,
+    files: impl IntoIterator<Item = impl AsRef<Path>>,
 ) -> Mapping {
     let mut outcomes: Vec<FileOutcome> = files
         .into_iter()
         .flat_map(|file| {
+            let file = file.as_ref();
             map_file(crates, globals, file)
                 .into_iter()
                 .map(|outcome| FileOutcome {
                     file: file.to_path_buf(),
                     outcome,
                 })
+                .collect::<Vec<_>>()
         })
         .collect();
     outcomes.sort();
@@ -292,6 +297,11 @@ pub fn map_files<'a>(
 }
 
 fn map_file(crates: &[CrateDir], globals: &GlobalFiles, file: &Path) -> Vec<Outcome> {
+    // Above the workspace root nothing may claim the file: the root package's directory
+    // (the empty path) contains every path, and `**` would match through `..`.
+    if file.starts_with("..") {
+        return vec![Outcome::Unmapped];
+    }
     if globals.matches(file) {
         return vec![Outcome::GlobalFile];
     }
@@ -399,6 +409,25 @@ mod tests {
         let crates = [CrateDir::new("a", "crates/a")];
         let got = changed_crates(&crates, paths(&["README.md", "crates/about.txt"]));
         assert!(got.is_empty());
+    }
+
+    #[test]
+    fn a_file_above_the_workspace_root_is_unmapped_whatever_the_crates_and_globs_say() {
+        // The root package owns everything under the root and `**` would reach through
+        // `..`; neither may claim a file above the workspace root.
+        let crates = [CrateDir::new("root", ""), CrateDir::new("a", "crates/a")];
+        let globals = GlobalFiles::new(&["**/*.toml".to_string()]).unwrap();
+        let files = ["../Cargo.lock", "../Cargo.toml", "../crates/a/src/lib.rs"];
+        let got = map_files(&crates, &globals, paths(&files));
+        assert!(got.global_files().is_empty());
+        assert!(got.changed().is_empty());
+        assert_eq!(
+            got.outcomes,
+            files.map(|file| FileOutcome {
+                file: PathBuf::from(file),
+                outcome: Outcome::Unmapped,
+            })
+        );
     }
 
     #[test]

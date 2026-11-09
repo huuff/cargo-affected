@@ -64,7 +64,7 @@ pub fn report(opts: &Options) -> Result<Report> {
         .root
         .strip_prefix(&repo.root)
         .context("the workspace root is not inside the git repository")?;
-    let files = change_set.files_under(workspace_in_repo);
+    let files = change_set.files_relative_to(workspace_in_repo);
     let globals = mapping::GlobalFiles::new(&workspace.global_globs)?;
     let mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
 

@@ -31,12 +31,26 @@ pub struct ChangeSet {
 }
 
 impl ChangeSet {
-    /// The files under `dir` (relative to the repository root), as paths relative to `dir`.
-    pub fn files_under<'a>(&'a self, dir: &'a Path) -> impl Iterator<Item = &'a Path> {
-        self.files
-            .iter()
-            .filter_map(move |f| f.strip_prefix(dir).ok())
+    /// Every file as a path relative to `dir`, itself relative to the repository root. A
+    /// file outside `dir` climbs out of it with leading `..` components, so a workspace
+    /// below the git root can still name every file of the Change Set.
+    pub fn files_relative_to<'a>(&'a self, dir: &'a Path) -> impl Iterator<Item = PathBuf> + 'a {
+        self.files.iter().map(move |file| relative_to(file, dir))
     }
+}
+
+/// `file` as a path from `dir`, both relative to the same root: the components after the
+/// common prefix, preceded by one `..` for each component of `dir` not shared.
+fn relative_to(file: &Path, dir: &Path) -> PathBuf {
+    let mut file = file.components().peekable();
+    let mut dir = dir.components().peekable();
+    while file.peek().is_some() && file.peek() == dir.peek() {
+        file.next();
+        dir.next();
+    }
+    let mut path: PathBuf = dir.map(|_| "..").collect();
+    path.extend(file);
+    path
 }
 
 impl Repo {
@@ -184,6 +198,20 @@ fn stderr_of(out: &Output) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_outside_the_directory_climbs_out_of_it_with_parent_components() {
+        let rel = |file: &str, dir: &str| relative_to(Path::new(file), Path::new(dir));
+        assert_eq!(
+            rel("ws/crates/a/lib.rs", "ws"),
+            Path::new("crates/a/lib.rs")
+        );
+        assert_eq!(rel("TOP.md", "ws"), Path::new("../TOP.md"));
+        assert_eq!(rel("other/x.rs", "a/ws"), Path::new("../../other/x.rs"));
+        assert_eq!(rel("a/x.rs", "a/ws"), Path::new("../x.rs"));
+        assert_eq!(rel("wsx/y.rs", "ws"), Path::new("../wsx/y.rs"));
+        assert_eq!(rel("README.md", ""), Path::new("README.md"));
+    }
 
     #[test]
     fn renames_contribute_both_paths_and_deletions_their_path() {

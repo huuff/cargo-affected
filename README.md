@@ -309,7 +309,9 @@ deeper in the crate.
 
 where `<file>` is relative to the workspace root and `<outcome>` is one of
 `<crate> (crate directory)`, `<crate> (extra path)`, `<crate> (ignored)`, `global file` or
-`unmapped`. A file claimed by two crates appears once per crate. From
+`unmapped`. A file claimed by two crates appears once per crate. When the workspace sits
+below the git root, a file of the Change Set above the workspace root is listed as
+`../<path> -> unmapped`. From
 [`tests/fixtures/extra-paths`](tests/fixtures/extra-paths) after editing five files:
 
 ```console
@@ -443,8 +445,8 @@ prints the crates to test, and an empty output means there is nothing to do.
   and a second run reports the same crates. The Change Set is also computed before the
   workspace is loaded, so the rewrite never shows up in the report.
 - When the workspace sits below the git root, files of the Change Set above the workspace
-  root are neither mapped nor listed under `-v`; the mapping and the diagnostics cover the
-  files under the workspace root.
+  root are never mapped to a crate or a Global File, since globs and crate directories are
+  relative to the workspace root; `-v` lists them as `../<path> -> unmapped`.
 - `via` may name a non-member path crate: `uses-foo` above reports `"via": ["foo"]` even
   though `foo` never appears in `affected`. The tree shows the same crate as a
   `(non-member)` root.
