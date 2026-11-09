@@ -5,8 +5,18 @@ description = "Cargo subcommand that lists workspace crates affected by a change
 license = "MIT"
 edition = "2024"
 
+[lib]
+name = "cargo_affected"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cargo-affected"
 path = "src/main.rs"
 
 [dependencies]
+anyhow = "1"
+cargo_metadata = "0.23"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
