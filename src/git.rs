@@ -7,8 +7,12 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::process::{stderr_of, stdout_of};
 
-/// Branches tried, in order, when no `--base` is given.
-pub const DEFAULT_BASE_BRANCHES: [&str; 2] = ["origin/main", "main"];
+/// The remote's default branch, as recorded by `git clone` or `git remote set-head`.
+const REMOTE_HEAD: &str = "refs/remotes/origin/HEAD";
+
+/// Branches tried, in order, when no `--base` is given and the remote's default branch
+/// is not recorded in the clone.
+pub const FALLBACK_BASE_BRANCHES: [&str; 4] = ["origin/main", "main", "origin/master", "master"];
 
 /// The git repository containing the workspace.
 pub struct Repo {
@@ -19,7 +23,7 @@ pub struct Repo {
 /// How the `from` end of the Change Set is chosen.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Base {
-    /// Merge-base of the given branch and HEAD; `None` tries [`DEFAULT_BASE_BRANCHES`].
+    /// Merge-base of the given branch and HEAD; `None` detects the default branch.
     MergeBase(Option<String>),
     /// Exactly this ref.
     Exact(String),
@@ -80,18 +84,40 @@ impl Repo {
             Base::Exact(rev) => self.rev_parse(rev),
             Base::MergeBase(Some(branch)) => self.merge_base(branch),
             Base::MergeBase(None) => {
-                let branch = DEFAULT_BASE_BRANCHES
-                    .into_iter()
-                    .find(|b| self.rev_parse(b).is_ok())
-                    .ok_or_else(|| {
-                        let tried = DEFAULT_BASE_BRANCHES
-                            .map(|b| format!("`{b}`"))
-                            .join(" nor ");
-                        anyhow!("neither {tried} exists; pass the base branch with `--base <ref>`")
-                    })?;
-                self.merge_base(branch)
+                let branch = self.default_branch()?;
+                self.merge_base(&branch)
             }
         }
+    }
+
+    /// The branch the Base is computed from when no `--base` is given: the remote's
+    /// default branch (the target of `origin/HEAD`) when the clone records one that
+    /// exists, otherwise the first of [`FALLBACK_BASE_BRANCHES`] that exists.
+    fn default_branch(&self) -> Result<String> {
+        let remote_head = git_output(&self.root, &["symbolic-ref", "--quiet", REMOTE_HEAD])?;
+        let remote_default = remote_head
+            .status
+            .success()
+            .then(|| String::from_utf8(remote_head.stdout).ok())
+            .flatten()
+            .and_then(|target| {
+                target
+                    .trim_end()
+                    .strip_prefix("refs/remotes/")
+                    .map(str::to_string)
+            });
+        remote_default
+            .iter()
+            .map(String::as_str)
+            .chain(FALLBACK_BASE_BRANCHES)
+            .find(|b| self.rev_parse(b).is_ok())
+            .map(str::to_string)
+            .ok_or_else(|| {
+                let tried = FALLBACK_BASE_BRANCHES.map(|b| format!("`{b}`")).join(", ");
+                anyhow!(
+                    "cannot detect the base branch: `origin/HEAD` is not set and none of {tried} exists; pass the base branch with `--base <ref>`"
+                )
+            })
     }
 
     /// Change Set between `from` and `to`; `None` inspects the working tree, including

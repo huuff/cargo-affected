@@ -15,7 +15,7 @@ so a CI pipeline can skip crates that are not affected.
 
 The Change Set is `git diff <from> <to>` over file paths.
 
-- `--base <ref>` (default: `origin/main`, falling back to `main`): `from` is `git merge-base <ref> HEAD`.
+- `--base <ref>` (default: the remote's default branch, i.e. the target of `origin/HEAD`, falling back to the first of `origin/main`, `main`, `origin/master`, `master` that exists): `from` is `git merge-base <ref> HEAD`.
 - `--from <ref>`: `from` is exactly `<ref>`. Mutually exclusive with `--base`.
 - `--to <ref>`: default is the working tree, including staged, unstaged and untracked
   files that are not gitignored. `--to HEAD` restricts to committed work.

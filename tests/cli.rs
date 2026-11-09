@@ -124,11 +124,22 @@ impl Fixture {
     /// the branches share no history there, as in a CI checkout. The `file://` URL is
     /// what makes git honour `--depth`; a plain path clone ignores it.
     fn shallow_clone(&self) -> Self {
+        self.clone_with(&["--depth", "1", "--no-single-branch"])
+    }
+
+    /// A full clone of the repository, with this one as its `origin`.
+    fn clone_repo(&self) -> Self {
+        self.clone_with(&[])
+    }
+
+    fn clone_with(&self, options: &[&str]) -> Self {
         let dir = TempDir::new().unwrap();
         let clone = dir.path().canonicalize().unwrap().join("clone");
         let url = format!("file://{}", self.root.display());
         let out = git_command(dir.path())
-            .args(["clone", "-q", "--depth", "1", "--no-single-branch", &url])
+            .args(["clone", "-q"])
+            .args(options)
+            .arg(&url)
             .arg(&clone)
             .output()
             .unwrap();
@@ -941,7 +952,9 @@ fn a_shallow_clone_without_a_merge_base_is_an_error_suggesting_to_fetch_more_his
     fx.git(&["checkout", "-q", "-b", "feature"]);
     fx.write("crates/a/src/lib.rs", "pub fn a() { /* on branch */ }\n");
     fx.commit("touch a");
+    fx.git(&["checkout", "-q", "main"]);
     let clone = fx.shallow_clone();
+    clone.git(&["checkout", "-q", "feature"]);
 
     let msg = error_of(&clone.run(&["--to", "HEAD"]));
     assert!(msg.contains("no merge-base"), "{msg}");
@@ -949,6 +962,29 @@ fn a_shallow_clone_without_a_merge_base_is_an_error_suggesting_to_fetch_more_his
     assert!(msg.contains("fetch more history"), "{msg}");
     assert!(msg.contains("git fetch --unshallow"), "{msg}");
     assert!(!msg.contains("failed:"), "{msg}");
+}
+
+#[test]
+fn the_default_base_is_the_remote_default_branch_whatever_its_name() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["branch", "-m", "main", "trunk"]);
+    let clone = fx.clone_repo();
+    clone.git(&["checkout", "-q", "-b", "feature"]);
+    clone.write("crates/a/src/lib.rs", "pub fn a() { /* on branch */ }\n");
+    clone.commit("touch a");
+
+    assert_eq!(lines(&clone.run(&["--to", "HEAD"])), ["a"]);
+}
+
+#[test]
+fn without_a_remote_default_branch_the_default_base_falls_back_to_master() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["branch", "-m", "main", "master"]);
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    fx.write("crates/a/src/lib.rs", "pub fn a() { /* on branch */ }\n");
+    fx.commit("touch a");
+
+    assert_eq!(lines(&fx.run(&["--to", "HEAD"])), ["a"]);
 }
 
 #[test]

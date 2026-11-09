@@ -47,8 +47,10 @@ exactly.
   the repository: `git diff <base> <to>` over paths. Renamed files contribute both paths,
   deleted files their path.
 - The **Base** is the git state the Change Set is computed against. By default it is the
-  merge-base of `origin/main` (or `main`) and `HEAD`, so a feature branch is compared
-  against the point where it forked, not against the tip of `main`. `--base` picks another
+  merge-base of the remote's default branch and `HEAD`, so a feature branch is compared
+  against the point where it forked, not against the tip of that branch. The default
+  branch is the target of `origin/HEAD` when the clone records one, otherwise the first
+  of `origin/main`, `main`, `origin/master`, `master` that exists. `--base` picks another
   branch, `--from` an exact ref.
 - The `to` end defaults to the working tree: staged, unstaged and untracked files that are
   not gitignored. `--to HEAD` restricts it to committed work.
@@ -134,7 +136,7 @@ behave identically.
 
 | Flag                                 | Default                                 | Meaning                                                                                                                                               |
 | ------------------------------------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--base <REF>`                       | `origin/main`, falling back to `main`   | Branch to compute the Base from: the Base is the merge-base of `REF` and `HEAD`. Conflicts with `--from`.                                             |
+| `--base <REF>`                       | the remote's default branch (`origin/HEAD`), falling back to `origin/main`, `main`, `origin/master`, `master` | Branch to compute the Base from: the Base is the merge-base of `REF` and `HEAD`. Conflicts with `--from`.                                             |
 | `--from <REF>`                       | unset                                   | Use exactly `REF` as the Base instead of a merge-base.                                                                                                |
 | `--to <REF>`                         | the working tree                        | Ref to compare against. Without it the Change Set includes staged, unstaged and untracked files that are not gitignored; `--to HEAD` means committed work only. |
 | `--manifest-path <PATH>`             | the `Cargo.toml` found upward from `.`  | Path to the workspace `Cargo.toml`. The workspace may sit below the git root.                                                                         |
@@ -382,8 +384,8 @@ skipping every crate.
   ``error: ref `does-not-exist` does not exist; fetch it first (e.g. `git fetch origin does-not-exist`)``
 - No merge-base, which in CI almost always means a shallow clone:
   ``error: no merge-base between `origin/main` and HEAD: the clone is shallow or the histories are unrelated; fetch more history (e.g. `git fetch --unshallow`, or `git fetch --deepen=<n>`) or pass another base with `--base <ref>` ``
-- No `--base` and neither default branch exists:
-  ``error: neither `origin/main` nor `main` exists; pass the base branch with `--base <ref>` ``
+- No `--base` and no default branch can be detected:
+  ``error: cannot detect the base branch: `origin/HEAD` is not set and none of `origin/main`, `main`, `origin/master`, `master` exists; pass the base branch with `--base <ref>` ``
 - Outside a git repository:
   ``error: <dir> is not inside a git repository; run `cargo affected` inside a checkout of the workspace``
 - Outside a Cargo workspace:

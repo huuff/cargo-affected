@@ -32,7 +32,7 @@ use workspace::Workspace;
 /// What to compute the Change Set over, and how to report the result.
 #[derive(Debug, Default, Clone)]
 pub struct Options {
-    /// Branch whose merge-base with HEAD is the Base; `None` tries the default branches.
+    /// Branch whose merge-base with HEAD is the Base; `None` detects the default branch.
     pub base: Option<String>,
     /// Exact ref to use as the Base; takes precedence over `base`.
     pub from: Option<String>,

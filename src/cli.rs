@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use cargo_affected::Options;
-use cargo_affected::git::DEFAULT_BASE_BRANCHES;
+use cargo_affected::git::FALLBACK_BASE_BRANCHES;
 use cargo_affected::render;
 use clap::{Parser, ValueEnum};
 
@@ -109,8 +109,8 @@ impl From<Cli> for Options {
 
 fn base_help() -> String {
     format!(
-        "Branch to compute the Base from: the merge-base of this ref and HEAD. Defaults to `{}`, falling back to `{}`",
-        DEFAULT_BASE_BRANCHES[0], DEFAULT_BASE_BRANCHES[1]
+        "Branch to compute the Base from: the merge-base of this ref and HEAD. Defaults to the remote's default branch (`origin/HEAD`), falling back to the first of {} that exists",
+        FALLBACK_BASE_BRANCHES.map(|b| format!("`{b}`")).join(", ")
     )
 }
 
