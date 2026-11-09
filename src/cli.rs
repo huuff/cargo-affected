@@ -35,6 +35,10 @@ pub struct Cli {
     /// Output format.
     #[arg(long, value_enum, default_value_t)]
     pub format: Format,
+
+    /// Characters drawing the connectors of `--format tree`.
+    #[arg(long, value_enum, default_value_t)]
+    pub charset: Charset,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -45,18 +49,39 @@ pub enum Format {
     /// One JSON document: base and to commits, global files and, per crate, its manifest
     /// path, reason, changed files and the dependencies it is affected through.
     Json,
+    /// Why each crate is affected: changed crates and global files as roots with their
+    /// dependents beneath, `cargo tree` style; a crate shown earlier is marked `(*)`.
+    Tree,
 }
 
-impl From<Format> for render::Format {
-    fn from(format: Format) -> Self {
-        match format {
-            Format::List => Self::List,
-            Format::Json => Self::Json,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum Charset {
+    /// Box-drawing characters.
+    #[default]
+    Unicode,
+    /// Plain ASCII, for terminals and logs without UTF-8.
+    Ascii,
+}
+
+impl From<Charset> for render::Charset {
+    fn from(charset: Charset) -> Self {
+        match charset {
+            Charset::Unicode => Self::Unicode,
+            Charset::Ascii => Self::Ascii,
         }
     }
 }
 
 impl Cli {
+    /// The output format to render, with the charset folded into the tree format.
+    pub fn render_format(&self) -> render::Format {
+        match self.format {
+            Format::List => render::Format::List,
+            Format::Json => render::Format::Json,
+            Format::Tree => render::Format::Tree(self.charset.into()),
+        }
+    }
+
     /// Parses the process arguments, dropping the leading `affected` that Cargo inserts
     /// when dispatching `cargo affected`.
     pub fn parse_from_env() -> Self {
@@ -119,6 +144,23 @@ mod tests {
         let cli = Cli::try_parse_from(["cargo-affected", "--format", "json"]).unwrap();
         assert_eq!(cli.format, Format::Json);
         let err = Cli::try_parse_from(["cargo-affected", "--format", "yaml"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn tree_format_takes_the_charset_which_defaults_to_unicode() {
+        let cli = Cli::try_parse_from(["cargo-affected", "--format", "tree"]).unwrap();
+        assert_eq!(
+            cli.render_format(),
+            render::Format::Tree(render::Charset::Unicode)
+        );
+        let cli = Cli::try_parse_from(["cargo-affected", "--format", "tree", "--charset", "ascii"])
+            .unwrap();
+        assert_eq!(
+            cli.render_format(),
+            render::Format::Tree(render::Charset::Ascii)
+        );
+        let err = Cli::try_parse_from(["cargo-affected", "--charset", "utf8"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
     }
 

@@ -612,3 +612,88 @@ fn json_never_lists_a_non_member_but_names_it_in_via() {
     assert_eq!(c["via"], json!(["foo"]));
     assert_eq!(c["changed_files"], json!([]));
 }
+
+#[test]
+fn tree_prints_the_changed_crate_as_root_with_each_dependent_beneath_the_crate_it_uses() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    assert_eq!(
+        stdout(&fx.run(&["--format", "tree"])),
+        "core\n\
+         ├── build-user\n\
+         ├── dev-user\n\
+         ├── mid\n\
+         │   └── app\n\
+         ├── opt-user\n\
+         └── target-user\n"
+    );
+}
+
+#[test]
+fn tree_expands_the_shared_dependent_of_a_diamond_once_and_marks_it_the_second_time() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/base/src/lib.rs", "pub fn base() { /* edited */ }\n");
+    assert_eq!(
+        stdout(&fx.run(&["--format", "tree"])),
+        "base\n\
+         ├── left\n\
+         │   └── top\n\
+         └── right\n\
+         \x20   └── top (*)\n"
+    );
+}
+
+#[test]
+fn tree_shows_an_edited_non_member_path_dependency_as_a_labelled_root() {
+    let fx = Fixture::new("graph", "");
+    fx.write("vendor/foo/src/lib.rs", "pub fn foo() { /* edited */ }\n");
+    assert_eq!(
+        stdout(&fx.run(&["--format", "tree"])),
+        "foo (non-member)\n\
+         └── uses-foo\n"
+    );
+}
+
+#[test]
+fn tree_lists_every_member_as_a_leaf_under_the_edited_lockfile() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    let lockfile = fx.root.join("Cargo.lock");
+    let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
+    fx.write("Cargo.lock", &edited);
+    fx.commit("touch lockfile");
+    assert_eq!(
+        stdout(&fx.run(&["--format", "tree", "--base", "main", "--to", "HEAD"])),
+        "Cargo.lock\n\
+         ├── a\n\
+         └── b\n"
+    );
+}
+
+#[test]
+fn tree_with_ascii_charset_contains_no_non_ascii_bytes() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/base/src/lib.rs", "pub fn base() { /* edited */ }\n");
+    let out = fx.run(&["--format", "tree", "--charset", "ascii"]);
+    let text = stdout(&out);
+    assert!(out.stdout.is_ascii(), "{text}");
+    assert_eq!(
+        text,
+        "base\n\
+         |-- left\n\
+         |   `-- top\n\
+         `-- right\n\
+         \x20   `-- top (*)\n"
+    );
+}
+
+#[test]
+fn tree_with_changed_only_prints_only_the_roots() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    fx.write("vendor/foo/src/lib.rs", "pub fn foo() { /* edited */ }\n");
+    assert_eq!(
+        stdout(&fx.run(&["--format", "tree", "--changed-only"])),
+        "core\nfoo (non-member)\n"
+    );
+}

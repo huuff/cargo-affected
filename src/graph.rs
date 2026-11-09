@@ -35,6 +35,15 @@ impl DependencyGraph {
             .map(String::as_str)
     }
 
+    /// The crates that depend on `dependency` directly, sorted by name.
+    pub fn dependents<'a>(&'a self, dependency: &str) -> impl Iterator<Item = &'a str> + 'a {
+        self.dependents
+            .get(dependency)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+    }
+
     /// The Changed Crates plus every transitive Dependent of one.
     pub fn with_dependents(&self, changed: impl IntoIterator<Item = String>) -> BTreeSet<String> {
         let mut affected = BTreeSet::new();
@@ -140,6 +149,14 @@ mod tests {
         assert_eq!(g.dependencies("top").collect::<Vec<_>>(), ["left", "right"]);
         assert_eq!(g.dependencies("base").count(), 0);
         assert_eq!(g.dependencies("unknown").count(), 0);
+    }
+
+    #[test]
+    fn direct_dependents_are_listed_sorted_and_transitive_ones_are_not() {
+        let g = graph(&[("right", "base"), ("left", "base"), ("top", "left")]);
+        assert_eq!(g.dependents("base").collect::<Vec<_>>(), ["left", "right"]);
+        assert_eq!(g.dependents("top").count(), 0);
+        assert_eq!(g.dependents("unknown").count(), 0);
     }
 
     #[test]

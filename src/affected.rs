@@ -71,6 +71,28 @@ pub fn via(
         .collect()
 }
 
+/// For every Affected Crate, its direct Dependents that are Affected Crates and satisfy
+/// `include`, sorted by name; crates with none are left out. The inverse of [`via`],
+/// restricted to the crates an output may show.
+pub fn dependents(
+    affected: &BTreeMap<String, Reason>,
+    graph: &DependencyGraph,
+    include: impl Fn(&str) -> bool,
+) -> BTreeMap<String, Vec<String>> {
+    affected
+        .keys()
+        .map(|name| {
+            let dependents: Vec<String> = graph
+                .dependents(name)
+                .filter(|d| affected.contains_key(*d) && include(d))
+                .map(str::to_string)
+                .collect();
+            (name.clone(), dependents)
+        })
+        .filter(|(_, dependents)| !dependents.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +195,27 @@ mod tests {
         let g = graph(&[("app", "core")]);
         let affected = affected_crates(strings(&["app", "core"]), strings(&["core"]), &g);
         assert!(via("app", &affected, &g).is_empty());
+    }
+
+    #[test]
+    fn dependents_lists_the_affected_direct_dependents_the_filter_admits() {
+        // `foo` is changed; `uses-foo` and `vendored` depend on it, `app` on `uses-foo`,
+        // and `bystander` on nothing affected. `vendored` is excluded by the filter.
+        let g = graph(&[
+            ("uses-foo", "foo"),
+            ("vendored", "foo"),
+            ("app", "uses-foo"),
+            ("bystander", "util"),
+        ]);
+        let affected = affected_crates([], strings(&["foo"]), &g);
+        let got = dependents(&affected, &g, |name| name != "vendored");
+        assert_eq!(
+            got,
+            BTreeMap::from([
+                ("foo".to_string(), strings(&["uses-foo"])),
+                ("uses-foo".to_string(), strings(&["app"])),
+            ])
+        );
     }
 
     #[test]

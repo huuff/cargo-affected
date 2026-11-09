@@ -2,6 +2,7 @@
 //! Affected Crates among the workspace members, with everything an output format needs
 //! to explain why. Rendering lives in `render`.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use serde::{Serialize, Serializer};
@@ -18,6 +19,16 @@ pub struct Report {
     pub global_files: Vec<PathBuf>,
     /// The Affected Crates that are workspace members, sorted by name.
     pub affected: Vec<AffectedCrate>,
+    /// Changed non-member path crates, sorted by name. Tree only: never serialised, since
+    /// only members are output in the other formats.
+    #[serde(skip)]
+    pub changed_non_members: Vec<String>,
+    /// Crate name -> its direct Dependents among the affected members, sorted by name;
+    /// crates without one are absent, and the whole map is empty with `changed_only`.
+    /// Tree only: the inverse of `via`, so the tree can be walked downward from a root
+    /// without the graph.
+    #[serde(skip)]
+    pub dependents: BTreeMap<String, Vec<String>>,
 }
 
 /// The inspected end of the Change Set: a commit, or the working tree.

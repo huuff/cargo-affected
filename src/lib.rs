@@ -71,7 +71,22 @@ pub fn report(opts: &Options) -> Result<Report> {
     } else {
         workspace.member_names()
     };
-    let affected = affected::affected_crates(global, mapping.changed(), &workspace.graph);
+    let changed = mapping.changed();
+    let affected = affected::affected_crates(global, changed.iter().cloned(), &workspace.graph);
+    // The tree walks from the roots down to their Dependents; with `changed_only` there
+    // is nothing to walk to, and only members are ever shown below a root.
+    let dependents = if opts.changed_only {
+        Default::default()
+    } else {
+        affected::dependents(&affected, &workspace.graph, |name| {
+            workspace.member(name).is_some()
+        })
+    };
+    let changed_non_members = changed
+        .iter()
+        .filter(|name| workspace.member(name).is_none())
+        .cloned()
+        .collect();
     let members = affected
         .iter()
         .filter(|(_, reason)| !(opts.changed_only && **reason == Reason::Dependent))
@@ -89,5 +104,7 @@ pub fn report(opts: &Options) -> Result<Report> {
         to,
         global_files,
         affected: members,
+        changed_non_members,
+        dependents,
     })
 }
