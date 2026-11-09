@@ -9,3 +9,17 @@ Cargo subcommand that lists workspace crates affected by a change. Rust binary; 
 - Nix package: `nix build` (uses `nix/package.nix`; keep `Cargo.lock` committed, it is the lockfile for `buildRustPackage`).
 - Commits follow Conventional Commits (`feat:`, `fix:`, `chore:`, ...); the commitizen hook enforces it.
 - devenv `scripts.*` with real logic: use nushell (`package = pkgs.nushell`); CLI args need `def --wrapped main [...args]`, interpolation is `$"(...)"`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as markdown files under `.scratch/<feature>/` in this repo. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
