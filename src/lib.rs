@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use git::{Base, Repo};
 use workspace::Workspace;
 
-/// What to compute the Change Set over.
+/// What to compute the Change Set over, and how to report the result.
 #[derive(Debug, Default, Clone)]
 pub struct Options {
     /// Branch whose merge-base with HEAD is the Base; `None` tries the default branches.

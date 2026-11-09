@@ -53,7 +53,13 @@ impl Workspace {
             .map(|pkg| {
                 Ok(Package {
                     name: pkg.name.to_string(),
-                    dir: canonical_dir(pkg.manifest_path.as_std_path(), &pkg.name)?,
+                    dir: canonical_dir(
+                        pkg.manifest_path
+                            .parent()
+                            .expect("manifest path has a parent")
+                            .as_std_path(),
+                        &pkg.name,
+                    )?,
                     member: metadata.workspace_members.contains(&pkg.id),
                 })
             })
@@ -69,7 +75,7 @@ impl Workspace {
         for pkg in &path_packages {
             for dep in &pkg.dependencies {
                 let Some(dep_path) = &dep.path else { continue };
-                let dep_dir = canonical_dir_of(dep_path.as_std_path(), &dep.name)?;
+                let dep_dir = canonical_dir(dep_path.as_std_path(), &dep.name)?;
                 if let Some(dependency) = name_by_dir.get(dep_dir.as_path()) {
                     graph.add_dependency(&pkg.name, dependency);
                 }
@@ -101,14 +107,7 @@ impl Workspace {
     }
 }
 
-fn canonical_dir(manifest_path: &Path, name: &str) -> Result<PathBuf> {
-    canonical_dir_of(
-        manifest_path.parent().expect("manifest path has a parent"),
-        name,
-    )
-}
-
-fn canonical_dir_of(dir: &Path, name: &str) -> Result<PathBuf> {
+fn canonical_dir(dir: &Path, name: &str) -> Result<PathBuf> {
     dir.canonicalize()
         .with_context(|| format!("canonicalising the directory of `{name}`"))
 }

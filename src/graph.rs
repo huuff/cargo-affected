@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Who depends on whom, by crate name. Every dependency written in a `Cargo.toml` is an
 /// edge, whatever its kind, optionality or target.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default)]
 pub struct DependencyGraph {
     /// Dependency name -> names of the crates that depend on it directly.
     dependents: BTreeMap<String, BTreeSet<String>>,
@@ -84,6 +84,20 @@ mod tests {
         assert_eq!(
             names(g.affected(["base".to_string()])),
             ["base", "left", "right", "top"]
+        );
+    }
+
+    #[test]
+    fn a_cycle_through_a_dev_dependency_terminates_and_reports_each_crate_once() {
+        // `core-tests` depends on `core`, and `core` dev-depends on `core-tests`.
+        let g = graph(&[
+            ("core-tests", "core"),
+            ("core", "core-tests"),
+            ("app", "core"),
+        ]);
+        assert_eq!(
+            names(g.affected(["core".to_string()])),
+            ["app", "core", "core-tests"]
         );
     }
 
