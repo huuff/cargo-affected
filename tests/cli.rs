@@ -1,6 +1,7 @@
 //! Integration tests: copy a fixture workspace to a temp dir, `git init` it, commit a
 //! baseline, apply changes and run the binary.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -29,9 +30,7 @@ impl Fixture {
     fn unversioned(name: &str, workspace: &str) -> Self {
         let dir = TempDir::new().unwrap();
         let root = dir.path().canonicalize().unwrap();
-        let src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
-            .join(name);
+        let src = repo_path("tests/fixtures").join(name);
         copy_dir(&src, &root.join(workspace));
         let fixture = Self {
             _dir: dir,
@@ -127,6 +126,11 @@ fn run_binary(cwd: &Path, args: &[&str]) -> Output {
     cmd.args(args).current_dir(cwd);
     git_env(&mut cmd);
     cmd.output().unwrap()
+}
+
+/// A path inside this repository, from a path relative to its root.
+fn repo_path(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
 }
 
 fn cargo() -> String {
@@ -869,7 +873,7 @@ fn a_manifest_edit_that_stales_the_lockfile_does_not_turn_the_lockfile_into_a_gl
 
 /// The long flags (`--name`) mentioned in `text`, deduplicated. A flag name starts with
 /// a letter, which keeps the `---` rules of a Markdown table out.
-fn long_flags(text: &str) -> std::collections::BTreeSet<String> {
+fn long_flags(text: &str) -> BTreeSet<String> {
     text.match_indices("--")
         .map(|(at, _)| &text[at..])
         .filter(|rest| rest[2..].starts_with(|c: char| c.is_ascii_lowercase()))
@@ -883,7 +887,7 @@ fn long_flags(text: &str) -> std::collections::BTreeSet<String> {
 }
 
 fn readme() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("README.md")).unwrap()
+    fs::read_to_string(repo_path("README.md")).unwrap()
 }
 
 /// The body of the README's `## <heading>` section, up to the next `## ` heading.
@@ -893,27 +897,27 @@ fn readme_section(heading: &str) -> String {
         .find(&format!("\n## {heading}\n"))
         .unwrap_or_else(|| panic!("no `## {heading}` section in README.md"));
     let body = &readme[start + 1..];
-    let end = body[3..].find("\n## ").map_or(body.len(), |i| i + 3);
+    let end = body.find("\n## ").unwrap_or(body.len());
     body[..end].to_string()
 }
 
 #[test]
-fn readme_flags_table_and_help_name_the_same_flags() {
+fn readme_flags_section_and_help_name_the_same_flags() {
     let help = String::from_utf8(run_binary(Path::new("."), &["--help"]).stdout).unwrap();
     let in_help = long_flags(&help);
-    let flags = readme_section("Flags");
-    assert_eq!(long_flags(&flags), in_help);
+    let section = readme_section("Flags");
+    assert_eq!(long_flags(&section), in_help);
     for short in ["`-v`", "`-h`", "`-V`"] {
-        assert!(flags.contains(short), "README flags table lacks {short}");
+        assert!(
+            section.contains(short),
+            "README flags section lacks {short}"
+        );
     }
 }
 
 #[test]
 fn readme_embeds_the_github_actions_recipe_verbatim() {
-    let recipe = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/ci/github-actions.yml"),
-    )
-    .unwrap();
+    let recipe = fs::read_to_string(repo_path("docs/ci/github-actions.yml")).unwrap();
     assert!(
         readme().contains(recipe.trim_end()),
         "README.md and docs/ci/github-actions.yml differ"

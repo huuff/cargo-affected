@@ -19,9 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The Base is the merge-base of the base branch and HEAD, so the clone
-          # must hold enough history to contain it. Full history is the simplest
-          # way; a shallow clone fails with "no merge-base" instead of guessing.
+          # The Base is the merge-base of the base branch and HEAD, so the base
+          # branch and its history must be in the clone. Full history is the
+          # simplest way; a clone without it fails instead of guessing.
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo affected

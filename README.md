@@ -1,9 +1,9 @@
 # haf-cargo-affected
 
 `cargo affected` lists the workspace crates CI needs to run for, given what changed in
-git. It diffs two git states, maps every changed file to the crate that owns it, follows
-the dependency graph to everything that depends on those crates, and prints the result as
-a list, a tree or JSON.
+git. It computes the Change Set between two git states, maps every file of it to the
+crate that owns it, follows the dependency graph to every Dependent of those crates, and
+prints the result as a list, a tree or JSON.
 
 ```console
 $ echo '// edit' >> crates/base/src/lib.rs    # in tests/fixtures/graph
@@ -66,8 +66,8 @@ exactly.
 
 ### How a file maps to a crate
 
-Each file of the Change Set is tried against these rules in order; the first that applies
-wins:
+Each file of the Change Set is tried against these rules in order. A Global File is
+claimed by no crate, so rule 1 ends the search; rules 2 and 3 can both apply to one file:
 
 1. **Global File**: a built-in global or a `global` glob matches. Every member becomes an
    Affected Crate with reason `global`.
@@ -77,8 +77,8 @@ wins:
    matches that crate's `ignore` globs it does not make the crate Changed.
 4. Otherwise the file is unmapped and ignored. `-v` lists it.
 
-Rules 2 and 3 are not exclusive: a file inside crate `schema` that is also an Extra Path of
-`codegen` makes both crates Changed.
+So a file inside crate `schema` that is also an Extra Path of `codegen` makes both crates
+Changed.
 
 ### How affectedness spreads
 
@@ -276,7 +276,7 @@ The built-in set cannot be disabled.
 [package.metadata.affected]
 extra-paths = ["../proto/**", "../schema/src/types.rs"]
 
-# lib/Cargo.toml: documentation changes do not need lib's tests.
+# lib/Cargo.toml: an edit to the documentation does not need lib's tests.
 [package.metadata.affected]
 ignore = ["README.md", "docs/**"]
 ```
@@ -345,7 +345,7 @@ skipping every crate.
 - No `--base` and neither default branch exists:
   ``error: neither `origin/main` nor `main` exists; pass the base branch with `--base <ref>` ``
 - Outside a git repository:
-  `error: <dir> is not inside a git repository; run `cargo affected` inside a checkout of the workspace`
+  ``error: <dir> is not inside a git repository; run `cargo affected` inside a checkout of the workspace``
 - Outside a Cargo workspace:
   ``error: no Cargo workspace found: could not find `Cargo.toml` in `<dir>` or any parent directory``
 
@@ -355,18 +355,22 @@ Other git failures (`safe.directory`, corrupt objects) are reported in git's own
 
 The recipe below lives at [`docs/ci/github-actions.yml`](docs/ci/github-actions.yml); copy
 it into `.github/workflows/`. On every pull request a `plan` job computes the Affected
-Crates between the fork point of the PR's base branch and the PR head, turns their names
-into a job matrix with `jq`, and a `test` job runs once per crate. When nothing is affected
+Crates between the PR's base branch and the PR merged onto it, turns their names into a
+job matrix with `jq`, and a `test` job runs once per crate. When nothing is affected
 the `test` job is skipped rather than failed, because a matrix must not be empty.
 
 Three details matter:
 
-- `fetch-depth: 0` (or any fetch that brings in the base branch's history) so that the
-  merge-base exists. A shallow clone fails with the "no merge-base" error above.
-- `--base origin/<base branch>` rather than `--from`: the Base is the fork point, so a PR is
-  not blamed for commits that landed on the base branch after it forked. With
-  `actions/checkout` on `pull_request`, `HEAD` is the merge of the PR into its base, so
-  `--to HEAD` yields exactly the PR's changes.
+- `fetch-depth: 0` (or any fetch that brings in the base branch and its history) so that
+  `origin/<base branch>` exists and shares history with `HEAD`. With the default
+  `fetch-depth: 1` the base branch is not fetched at all and the run fails with the
+  "ref does not exist" error above; a fetch of the base branch that is too shallow to
+  reach the merge-base fails with "no merge-base". Neither failure skips crates silently.
+- `--base origin/<base branch>` with `--to HEAD`. On `pull_request`, `actions/checkout`
+  checks out `refs/pull/N/merge`, the PR merged onto the current tip of its base branch,
+  so the merge-base of `origin/<base branch>` and `HEAD` is that tip and the Change Set
+  is exactly what the PR adds to it. If you check out `github.event.pull_request.head.sha`
+  instead, the same `--base` resolves to the fork point of the PR and `--from` would not.
 - `--format json` plus `jq '{crate: [.affected[].name]}'` is the matrix, and
   `jq '.affected | length'` is the count the `if:` tests; an empty Change Set gives
   `{"crate":[]}` and `0`.
@@ -393,9 +397,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The Base is the merge-base of the base branch and HEAD, so the clone
-          # must hold enough history to contain it. Full history is the simplest
-          # way; a shallow clone fails with "no merge-base" instead of guessing.
+          # The Base is the merge-base of the base branch and HEAD, so the base
+          # branch and its history must be in the clone. Full history is the
+          # simplest way; a clone without it fails instead of guessing.
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Install cargo affected
@@ -451,9 +455,8 @@ prints the crates to test, and an empty output means there is nothing to do.
 - Crates present in the Change Set but unknown to `cargo metadata` (deleted crates,
   `workspace.exclude`d crates that nothing depends on) are not reported; their files fall
   through to the crate-directory and unmapped rules.
-- Precise `Cargo.lock` diffing (affecting only the crates that depend on a bumped external
-  dependency), disabling the built-in Global Files and coloured output are out of scope for
-  now.
+- Narrowing a `Cargo.lock` edit to the crates that depend on the bumped third-party crate,
+  disabling the built-in Global Files and coloured output are out of scope for now.
 
 ## Name
 
