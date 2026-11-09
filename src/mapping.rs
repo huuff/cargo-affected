@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// A crate and the directory it owns, relative to the workspace root.
 /// The root package owns the empty path, i.e. the whole workspace.
@@ -44,7 +44,8 @@ impl GlobalFiles {
         ".cargo/**",
     ];
 
-    /// The built-in Global Files extended with the user's gitignore-style globs.
+    /// The built-in Global Files extended with the user's gitignore-style globs: `*` and
+    /// `?` stay within one path component, `**` spans directories.
     pub fn new(user_globs: &[String]) -> Result<Self> {
         let mut builder = GlobSetBuilder::new();
         for pattern in Self::BUILT_IN
@@ -52,9 +53,12 @@ impl GlobalFiles {
             .copied()
             .chain(user_globs.iter().map(String::as_str))
         {
-            let glob = Glob::new(pattern).with_context(|| {
-                format!("invalid glob `{pattern}` in `[workspace.metadata.affected].global`")
-            })?;
+            let glob = GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .with_context(|| {
+                    format!("invalid glob `{pattern}` in `[workspace.metadata.affected].global`")
+                })?;
             builder.add(glob);
         }
         let set = builder
@@ -63,6 +67,7 @@ impl GlobalFiles {
         Ok(Self { set })
     }
 
+    /// Whether `file`, relative to the workspace root, is a Global File.
     pub fn matches(&self, file: &Path) -> bool {
         self.set.is_match(file)
     }
@@ -213,6 +218,15 @@ mod tests {
             .collect();
         assert_eq!(got.global_files, want);
         assert_eq!(got.changed.into_iter().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn a_single_star_stays_within_one_directory_while_a_double_star_spans_them() {
+        let globals = GlobalFiles::new(&["*.toml".to_string(), "ci/*".to_string()]).unwrap();
+        assert!(globals.matches(Path::new("deny.toml")));
+        assert!(globals.matches(Path::new("ci/test.sh")));
+        assert!(!globals.matches(Path::new("crates/a/Cargo.toml")));
+        assert!(!globals.matches(Path::new("ci/nested/run.sh")));
     }
 
     #[test]

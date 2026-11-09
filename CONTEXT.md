@@ -21,7 +21,7 @@ A crate that depends on another, directly or transitively. If A depends on B, A 
 _Avoid_: reverse dependency, downstream, consumer
 
 **Affected Crate**:
-A Changed Crate, or any workspace member that is a Dependent of one.
+A Changed Crate, any workspace member that is a Dependent of one, or every workspace member when a Global File changed.
 _Avoid_: impacted crate, dirty crate
 
 **Global File**:

@@ -20,8 +20,8 @@ impl DependencyGraph {
             .insert(dependent.to_string());
     }
 
-    /// The Affected Crates: the Changed Crates plus every transitive Dependent of one.
-    pub fn affected(&self, changed: impl IntoIterator<Item = String>) -> BTreeSet<String> {
+    /// The Changed Crates plus every transitive Dependent of one.
+    pub fn with_dependents(&self, changed: impl IntoIterator<Item = String>) -> BTreeSet<String> {
         let mut affected = BTreeSet::new();
         let mut pending: Vec<String> = changed.into_iter().collect();
         while let Some(name) = pending.pop() {
@@ -34,6 +34,16 @@ impl DependencyGraph {
         }
         affected
     }
+
+    /// A graph from `(dependent, dependency)` pairs, for tests.
+    #[cfg(test)]
+    pub(crate) fn from_edges(edges: &[(&str, &str)]) -> Self {
+        let mut g = Self::default();
+        for (dependent, dependency) in edges {
+            g.add_dependency(dependent, dependency);
+        }
+        g
+    }
 }
 
 #[cfg(test)]
@@ -41,11 +51,7 @@ mod tests {
     use super::*;
 
     fn graph(edges: &[(&str, &str)]) -> DependencyGraph {
-        let mut g = DependencyGraph::default();
-        for (dependent, dependency) in edges {
-            g.add_dependency(dependent, dependency);
-        }
-        g
+        DependencyGraph::from_edges(edges)
     }
 
     fn names(set: BTreeSet<String>) -> Vec<String> {
@@ -55,14 +61,17 @@ mod tests {
     #[test]
     fn a_direct_dependent_of_a_changed_crate_is_affected() {
         let g = graph(&[("app", "core")]);
-        assert_eq!(names(g.affected(["core".to_string()])), ["app", "core"]);
+        assert_eq!(
+            names(g.with_dependents(["core".to_string()])),
+            ["app", "core"]
+        );
     }
 
     #[test]
     fn affectedness_propagates_transitively() {
         let g = graph(&[("app", "mid"), ("mid", "core")]);
         assert_eq!(
-            names(g.affected(["core".to_string()])),
+            names(g.with_dependents(["core".to_string()])),
             ["app", "core", "mid"]
         );
     }
@@ -70,7 +79,10 @@ mod tests {
     #[test]
     fn dependencies_of_a_changed_crate_are_not_affected() {
         let g = graph(&[("app", "mid"), ("mid", "core")]);
-        assert_eq!(names(g.affected(["mid".to_string()])), ["app", "mid"]);
+        assert_eq!(
+            names(g.with_dependents(["mid".to_string()])),
+            ["app", "mid"]
+        );
     }
 
     #[test]
@@ -82,7 +94,7 @@ mod tests {
             ("right", "base"),
         ]);
         assert_eq!(
-            names(g.affected(["base".to_string()])),
+            names(g.with_dependents(["base".to_string()])),
             ["base", "left", "right", "top"]
         );
     }
@@ -96,7 +108,7 @@ mod tests {
             ("app", "core"),
         ]);
         assert_eq!(
-            names(g.affected(["core".to_string()])),
+            names(g.with_dependents(["core".to_string()])),
             ["app", "core", "core-tests"]
         );
     }
@@ -104,12 +116,12 @@ mod tests {
     #[test]
     fn a_changed_crate_unknown_to_the_graph_is_still_affected() {
         let g = graph(&[("app", "core")]);
-        assert_eq!(names(g.affected(["lonely".to_string()])), ["lonely"]);
+        assert_eq!(names(g.with_dependents(["lonely".to_string()])), ["lonely"]);
     }
 
     #[test]
     fn no_changed_crates_means_nothing_is_affected() {
         let g = graph(&[("app", "core")]);
-        assert!(g.affected([]).is_empty());
+        assert!(g.with_dependents([]).is_empty());
     }
 }

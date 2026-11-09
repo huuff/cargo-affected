@@ -28,7 +28,7 @@ pub fn affected_crates(
     graph: &DependencyGraph,
 ) -> BTreeMap<String, Reason> {
     let changed: Vec<String> = changed.into_iter().collect();
-    let dependents = graph.affected(changed.iter().cloned());
+    let dependents = graph.with_dependents(changed.iter().cloned());
     let mut affected = BTreeMap::new();
     let layers = [
         (
@@ -55,11 +55,7 @@ mod tests {
     use crate::graph::DependencyGraph;
 
     fn graph(edges: &[(&str, &str)]) -> DependencyGraph {
-        let mut g = DependencyGraph::default();
-        for (dependent, dependency) in edges {
-            g.add_dependency(dependent, dependency);
-        }
-        g
+        DependencyGraph::from_edges(edges)
     }
 
     fn strings(names: &[&str]) -> Vec<String> {
@@ -67,11 +63,11 @@ mod tests {
     }
 
     #[test]
-    fn global_beats_changed_beats_dependent() {
-        // `app` depends on `core`; both are members. `core` changed and a Global File
-        // changed, so `app` is global, changed and dependent at once.
-        let g = graph(&[("app", "core"), ("core", "app")]);
-        let got = affected_crates(strings(&["app", "core"]), strings(&["core"]), &g);
+    fn a_crate_that_is_global_changed_and_dependent_at_once_is_reported_as_global() {
+        // `app` depends on `core`, both have their own files in the Change Set, and a
+        // Global File changed: `app` qualifies under all three reasons.
+        let g = graph(&[("app", "core")]);
+        let got = affected_crates(strings(&["app", "core"]), strings(&["app", "core"]), &g);
         assert_eq!(
             got.into_iter().collect::<Vec<_>>(),
             [
@@ -79,13 +75,16 @@ mod tests {
                 ("core".to_string(), Reason::Global)
             ]
         );
+    }
 
-        let g = graph(&[("app", "core"), ("core", "app")]);
-        let got = affected_crates([], strings(&["core"]), &g);
+    #[test]
+    fn a_crate_that_is_changed_and_dependent_at_once_is_reported_as_changed() {
+        let g = graph(&[("app", "core")]);
+        let got = affected_crates([], strings(&["app", "core"]), &g);
         assert_eq!(
             got.into_iter().collect::<Vec<_>>(),
             [
-                ("app".to_string(), Reason::Dependent),
+                ("app".to_string(), Reason::Changed),
                 ("core".to_string(), Reason::Changed)
             ]
         );
