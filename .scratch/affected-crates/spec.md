@@ -28,10 +28,14 @@ The Change Set is `git diff <from> <to>` over file paths.
 
 Evaluated in order for each file in the Change Set:
 
-1. **Global File**: matches a built-in global (workspace `Cargo.toml`, `Cargo.lock`,
-   `rust-toolchain`, `rust-toolchain.toml`, `.cargo/**`) or a user glob from
+1. **Global File**: matches a built-in global (workspace `Cargo.toml`, `rust-toolchain`,
+   `rust-toolchain.toml`, `.cargo/**`) or a user glob from
    `[workspace.metadata.affected].global`. Every workspace member becomes Affected with
    reason `global`.
+1a. **Lockfile**: the workspace `Cargo.lock` is claimed by the crates whose Locked
+   Dependencies changed between the two ends of the Change Set, which are Changed, and by
+   nothing else. It is a Global File when the change cannot be narrowed. Decided in
+   [ADR 0003](../../docs/adr/0003-lockfile-narrowing.md); ticket 09.
 2. **Extra Path**: matches an `extra-paths` glob of some crate. That crate is Changed.
 3. **Crate directory**: the file is under a crate's manifest directory. Deepest crate wins.
    The root package, when present, owns the whole repo like any other crate. If the file
@@ -86,7 +90,7 @@ workspace members are output.
   {
     "base": "<sha>",
     "to": "<sha>" | "worktree",
-    "global_files": ["Cargo.lock"],
+    "global_files": ["Cargo.toml"],
     "affected": [
       { "name": "api",
         "manifest_path": "/abs/crates/api/Cargo.toml",
@@ -117,6 +121,6 @@ directly as `cargo-affected`. Supports `--manifest-path`.
 
 ## Out of scope for v1
 
-- Precise `Cargo.lock` diffing (only crates depending on the bumped external dependency).
+- ~~Precise `Cargo.lock` diffing~~: done after v1, see ticket 09 and ADR 0003.
 - Disabling built-in Global Files.
 - Colourised output.

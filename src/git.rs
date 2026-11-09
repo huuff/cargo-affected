@@ -117,6 +117,17 @@ impl Repo {
         Ok(ChangeSet { files })
     }
 
+    /// The contents of `file`, relative to the repository root, at commit `rev`; `None`
+    /// when the commit holds no such file or it is not UTF-8.
+    pub fn file_at(&self, rev: &str, file: &Path) -> Result<Option<String>> {
+        let out = git_output(&self.root, &["show", &format!("{rev}:{}", file.display())])?;
+        Ok(out
+            .status
+            .success()
+            .then(|| String::from_utf8(out.stdout).ok())
+            .flatten())
+    }
+
     /// Resolves `rev` to a commit hash.
     pub fn rev_parse(&self, rev: &str) -> Result<String> {
         let out = self

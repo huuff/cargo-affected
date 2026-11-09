@@ -1,7 +1,9 @@
 //! Maps files of the Change Set to the crates that own them. Pure: no git, no Cargo.
 //!
 //! Each file lands as follows. A Global File is claimed by no crate, so a root package
-//! never owns the workspace manifest. Otherwise every crate whose Extra Path globs match
+//! never owns the workspace manifest. The workspace's `Cargo.lock` is claimed by the
+//! crates whose Locked Dependencies changed, and by them only; it is a Global File when
+//! that could not be worked out. Otherwise every crate whose Extra Path globs match
 //! claims the file, and so does the deepest crate whose directory contains it unless that
 //! crate's `ignore` globs exclude it. A file nobody claims is unmapped, and so is a file
 //! above the workspace root (given with leading `..`): no glob or crate directory is even
@@ -17,7 +19,7 @@
 //! then claims the file regardless of that crate's `ignore` globs, which only decide
 //! whether the file counts for the crate whose directory contains it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -143,10 +145,13 @@ fn rebase(dir: &Path, glob: &str) -> Result<String> {
 
 /// The files whose change makes every workspace member an Affected Crate: the built-in
 /// set plus the user's `[workspace.metadata.affected].global` globs, all matched against
-/// paths relative to the workspace root.
+/// paths relative to the workspace root. The lockfile is one of them unless its change
+/// was narrowed to the crates it concerns, see [`GlobalFiles::narrow_lockfile`].
 #[derive(Debug)]
 pub struct GlobalFiles {
     globs: Globs,
+    /// Crate name -> its changed Locked Dependencies, once the lockfile change is narrowed.
+    locked_dependencies: Option<BTreeMap<String, Vec<String>>>,
 }
 
 /// Names a crate's setting in error messages, the same way for a wrong type and a bad glob.
@@ -158,10 +163,13 @@ impl GlobalFiles {
     /// The setting holding the user's Global File globs, as named in error messages.
     pub const SETTING: &str = "`[workspace.metadata.affected].global`";
 
-    /// Globs every workspace treats as Global Files.
-    pub const BUILT_IN: [&str; 5] = [
+    /// The workspace's lockfile, relative to the workspace root.
+    pub const LOCKFILE: &str = "Cargo.lock";
+
+    /// Globs every workspace treats as Global Files. The lockfile is not listed: it is a
+    /// Global File only while its change is not narrowed, or when a user glob names it.
+    pub const BUILT_IN: [&str; 4] = [
         "Cargo.toml",
-        "Cargo.lock",
         "rust-toolchain",
         "rust-toolchain.toml",
         ".cargo/**",
@@ -174,12 +182,24 @@ impl GlobalFiles {
             .copied()
             .chain(user_globs.iter().map(String::as_str));
         let globs = Globs::new(patterns, Self::SETTING)?;
-        Ok(Self { globs })
+        Ok(Self {
+            globs,
+            locked_dependencies: None,
+        })
+    }
+
+    /// Narrows the lockfile change to the crates named in `locked_dependencies`, each
+    /// with the Locked Dependencies that changed for it (see `lockfile`), so the lockfile
+    /// is no longer a Global File. A user glob matching the lockfile keeps it one.
+    pub fn narrow_lockfile(mut self, locked_dependencies: BTreeMap<String, Vec<String>>) -> Self {
+        self.locked_dependencies = Some(locked_dependencies);
+        self
     }
 
     /// Whether `file`, relative to the workspace root, is a Global File.
     pub fn matches(&self, file: &Path) -> bool {
         self.globs.matches(file)
+            || (file == Path::new(Self::LOCKFILE) && self.locked_dependencies.is_none())
     }
 }
 
@@ -190,6 +210,11 @@ impl GlobalFiles {
 pub enum Outcome {
     /// Matches a Global File glob; no crate claims it.
     GlobalFile,
+    /// The lockfile, claimed by the named crate because the listed Locked Dependencies
+    /// (`name version` labels) changed.
+    LockedDependency(String, Vec<String>),
+    /// The lockfile, changed in a way that concerns no crate's Locked Dependencies.
+    NoLockedDependency,
     /// Matches an `extra-paths` glob of the named crate.
     ExtraPath(String),
     /// Lies inside the named crate's directory, the deepest one containing it.
@@ -202,11 +227,14 @@ pub enum Outcome {
 
 impl Outcome {
     /// The crate this outcome makes a Changed Crate: the one whose directory holds the
-    /// file or whose Extra Path matched it. `None` for the other outcomes.
+    /// file, whose Extra Path matched it or whose Locked Dependencies changed. `None` for
+    /// the other outcomes.
     pub fn changed_crate(&self) -> Option<&str> {
         match self {
-            Self::ExtraPath(name) | Self::CrateDirectory(name) => Some(name),
-            Self::GlobalFile | Self::Ignored(_) | Self::Unmapped => None,
+            Self::LockedDependency(name, _)
+            | Self::ExtraPath(name)
+            | Self::CrateDirectory(name) => Some(name),
+            Self::GlobalFile | Self::NoLockedDependency | Self::Ignored(_) | Self::Unmapped => None,
         }
     }
 }
@@ -217,6 +245,10 @@ impl fmt::Display for Outcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GlobalFile => f.write_str("global file"),
+            Self::LockedDependency(name, dependencies) => {
+                write!(f, "{name} (locked dependency: {})", dependencies.join(", "))
+            }
+            Self::NoLockedDependency => f.write_str("no locked dependency changed"),
             Self::ExtraPath(name) => write!(f, "{name} (extra path)"),
             Self::CrateDirectory(name) => write!(f, "{name} (crate directory)"),
             Self::Ignored(name) => write!(f, "{name} (ignored)"),
@@ -255,7 +287,8 @@ impl Mapping {
     }
 
     /// The files that made `crate_name` a Changed Crate, sorted and deduplicated: those
-    /// inside its directory that it does not ignore, and those matching its Extra Paths.
+    /// inside its directory that it does not ignore, those matching its Extra Paths, and
+    /// the lockfile when its Locked Dependencies changed.
     pub fn changed_files(&self, crate_name: &str) -> Vec<PathBuf> {
         let mut files: Vec<PathBuf> = self
             .outcomes
@@ -311,6 +344,23 @@ fn map_file(crates: &[CrateDir], globals: &GlobalFiles, file: &Path) -> Vec<Outc
     if globals.matches(file) {
         return vec![Outcome::GlobalFile];
     }
+    // Not a Global File, so the lockfile change was narrowed. Nothing else may claim the
+    // lockfile: a root package's directory contains it.
+    if file == Path::new(GlobalFiles::LOCKFILE)
+        && let Some(locked) = &globals.locked_dependencies
+    {
+        let mut outcomes: Vec<Outcome> = crates
+            .iter()
+            .filter_map(|c| Some((c, locked.get(&c.name)?)))
+            .map(|(c, dependencies)| {
+                Outcome::LockedDependency(c.name.clone(), dependencies.clone())
+            })
+            .collect();
+        if outcomes.is_empty() {
+            outcomes.push(Outcome::NoLockedDependency);
+        }
+        return outcomes;
+    }
     let mut outcomes: Vec<Outcome> = crates
         .iter()
         .filter(|c| c.claims_as_extra_path(file))
@@ -364,6 +414,20 @@ mod tests {
         assert_eq!(
             rendered("Cargo.lock", Outcome::GlobalFile),
             "Cargo.lock -> global file"
+        );
+        assert_eq!(
+            rendered(
+                "Cargo.lock",
+                Outcome::LockedDependency(
+                    "core".into(),
+                    vec!["mio 1.0.3".into(), "serde 1.0.2".into()]
+                )
+            ),
+            "Cargo.lock -> core (locked dependency: mio 1.0.3, serde 1.0.2)"
+        );
+        assert_eq!(
+            rendered("Cargo.lock", Outcome::NoLockedDependency),
+            "Cargo.lock -> no locked dependency changed"
         );
         assert_eq!(
             rendered("proto/x.proto", Outcome::ExtraPath("codegen".into())),
@@ -744,5 +808,58 @@ mod tests {
         let files = ["zeta/a.rs", "alpha/b.rs", "zeta/c.rs"];
         let got = changed_crates(&crates, paths(&files));
         assert_eq!(got.into_iter().collect::<Vec<_>>(), ["alpha", "zeta"]);
+    }
+
+    #[test]
+    fn a_narrowed_lockfile_is_claimed_by_the_crates_whose_locked_dependencies_changed_only() {
+        // `root` is a root package: its directory contains the lockfile, which it must
+        // not claim for that. `gone` is named by the lockfile but is no crate here.
+        let crates = [
+            CrateDir::new("root", ""),
+            CrateDir::new("a", "crates/a"),
+            CrateDir::new("b", "crates/b"),
+        ];
+        let locked = BTreeMap::from([
+            ("a".to_string(), vec!["serde 1.0.2".to_string()]),
+            ("gone".to_string(), vec!["serde 1.0.2".to_string()]),
+        ]);
+        let globals = GlobalFiles::new(&[]).unwrap().narrow_lockfile(locked);
+        let got = map_files(&crates, &globals, paths(&["Cargo.lock"]));
+        assert!(got.global_files().is_empty());
+        assert_eq!(got.changed().into_iter().collect::<Vec<_>>(), ["a"]);
+        assert_eq!(got.changed_files("a"), [Path::new("Cargo.lock")]);
+        assert_eq!(
+            got.outcomes[0].outcome,
+            Outcome::LockedDependency("a".into(), vec!["serde 1.0.2".into()])
+        );
+    }
+
+    #[test]
+    fn a_narrowed_lockfile_that_concerns_no_crate_changes_none() {
+        let crates = [CrateDir::new("root", "")];
+        let globals = GlobalFiles::new(&[])
+            .unwrap()
+            .narrow_lockfile(BTreeMap::new());
+        let got = map_files(
+            &crates,
+            &globals,
+            paths(&["Cargo.lock", "crates/Cargo.lock"]),
+        );
+        assert!(got.global_files().is_empty());
+        // Only the workspace's own lockfile is special; another one is an ordinary file.
+        assert_eq!(got.changed_files("root"), [Path::new("crates/Cargo.lock")]);
+        assert_eq!(got.outcomes[0].outcome, Outcome::NoLockedDependency);
+    }
+
+    #[test]
+    fn a_user_glob_naming_the_lockfile_keeps_it_a_global_file_even_when_narrowed() {
+        let crates = [CrateDir::new("a", "crates/a")];
+        let locked = BTreeMap::from([("a".to_string(), vec!["serde 1.0.2".to_string()])]);
+        let globals = GlobalFiles::new(&["Cargo.lock".to_string()])
+            .unwrap()
+            .narrow_lockfile(locked);
+        let got = map_files(&crates, &globals, paths(&["Cargo.lock"]));
+        assert_eq!(got.global_files(), [Path::new("Cargo.lock")]);
+        assert!(got.changed().is_empty());
     }
 }

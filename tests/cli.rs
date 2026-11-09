@@ -62,6 +62,46 @@ impl Fixture {
         fs::write(path, content).unwrap();
     }
 
+    /// Rewrites the workspace lockfile through `edit`.
+    fn edit_lockfile(&self, edit: impl FnOnce(&str) -> String) {
+        let lockfile = self.workspace.join("Cargo.lock");
+        let text = fs::read_to_string(&lockfile).unwrap();
+        let edited = edit(&text);
+        assert_ne!(edited, text, "the edit left the lockfile as it was");
+        fs::write(lockfile, edited).unwrap();
+    }
+
+    /// Changes the lockfile's format version, a change outside its packages that
+    /// cannot be narrowed to the crates it concerns.
+    fn downgrade_lockfile_format(&self) {
+        self.edit_lockfile(|text| text.replace("\nversion = 4\n", "\nversion = 3\n"));
+    }
+
+    /// Makes `krate` depend on a third-party package the lockfile pins at `version`,
+    /// adding the package when the lockfile has none of that name. Only the lockfile
+    /// says so: no manifest names the package, so no registry is needed.
+    fn lock_dependency(&self, krate: &str, dependency: &str, version: &str) {
+        self.edit_lockfile(|text| {
+            let pinned = format!("name = \"{dependency}\"\nversion = \"");
+            if let Some(at) = text.find(&pinned) {
+                let start = at + pinned.len();
+                let end = start + text[start..].find('"').unwrap();
+                return format!("{}{version}{}", &text[..start], &text[end..]);
+            }
+            let entry = format!("name = \"{krate}\"\nversion = \"0.1.0\"\n");
+            assert!(text.contains(&entry), "no lockfile entry for {krate}");
+            text.replace(
+                &entry,
+                &format!("{entry}dependencies = [\n \"{dependency}\",\n]\n"),
+            ) + &format!(
+                "\n[[package]]\nname = \"{dependency}\"\nversion = \"{version}\"\n\
+                 source = \"registry+https://github.com/rust-lang/crates.io-index\"\n\
+                 checksum = \"{}\"\n",
+                "0".repeat(64)
+            )
+        });
+    }
+
     fn cargo_in_workspace(&self, args: &[&str]) {
         let out = Command::new(cargo())
             .args(args)
@@ -365,14 +405,96 @@ fn changed_only_leaves_out_crates_affected_as_dependents() {
 }
 
 #[test]
-fn editing_the_lockfile_prints_every_member() {
+fn a_lockfile_change_that_cannot_be_narrowed_prints_every_member() {
     let fx = Fixture::new("basic", "");
     fx.git(&["checkout", "-q", "-b", "feature"]);
-    let lockfile = fx.root.join("Cargo.lock");
-    let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
-    fx.write("Cargo.lock", &edited);
-    fx.commit("touch lockfile");
+    fx.downgrade_lockfile_format();
+    fx.commit("downgrade lockfile");
     // `cargo metadata` may rewrite a hand-edited lockfile, so compare committed states.
+    // The format version differs, which is outside the packages: no narrowing.
+    assert_eq!(
+        lines(&fx.run(&["--base", "main", "--to", "HEAD"])),
+        ["a", "b"]
+    );
+}
+
+#[test]
+fn a_bumped_locked_dependency_prints_the_crates_using_it_and_their_dependents() {
+    let fx = Fixture::new("graph", "");
+    // `base` uses third-party `left-pad`, `core` uses `is-odd`; only `left-pad` is bumped.
+    fx.lock_dependency("base", "left-pad", "1.0.0");
+    fx.lock_dependency("core", "is-odd", "1.0.0");
+    fx.commit("lock third-party dependencies");
+    fx.git(&["tag", "before"]);
+    fx.lock_dependency("base", "left-pad", "1.0.1");
+    fx.commit("bump left-pad");
+
+    let out = fx.run(&["--from", "before", "--to", "HEAD", "-v"]);
+    assert_eq!(lines(&out), ["base", "left", "right", "top"]);
+    assert_eq!(
+        stderr(&out),
+        "Cargo.lock -> base (locked dependency: left-pad 1.0.1)\n"
+    );
+
+    let doc = parse_json(&fx.run(&["--from", "before", "--to", "HEAD", "--format", "json"]));
+    assert_eq!(doc["global_files"], json!([]));
+    let base = affected(&doc, "base");
+    assert_eq!(base["reason"], "changed");
+    assert_eq!(base["changed_files"], json!(["Cargo.lock"]));
+    assert_eq!(affected(&doc, "left")["via"], json!(["base"]));
+
+    assert_eq!(
+        stdout(&fx.run(&["--from", "before", "--to", "HEAD", "--format", "tree"])),
+        "base\n\
+         ├── left\n\
+         │   └── top\n\
+         └── right\n\
+         \x20   └── top (*)\n"
+    );
+}
+
+#[test]
+fn bumping_a_crate_version_does_not_make_the_refreshed_lockfile_a_global_file() {
+    let fx = Fixture::new("graph", "");
+    fx.write(
+        "crates/mid/Cargo.toml",
+        "[package]\nname = \"mid\"\nversion = \"0.2.0\"\nedition = \"2024\"\n\
+         [dependencies]\ncore = { path = \"../core\" }\n",
+    );
+    fx.cargo_in_workspace(&["generate-lockfile", "--offline"]);
+    let out = fx.run(&["-v"]);
+    assert_eq!(lines(&out), ["app", "mid"]);
+    assert_eq!(
+        stderr(&out),
+        "Cargo.lock -> no locked dependency changed\n\
+         crates/mid/Cargo.toml -> mid (crate directory)\n"
+    );
+}
+
+#[test]
+fn a_comment_added_to_the_lockfile_prints_nothing() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    fx.edit_lockfile(|text| format!("{text}\n# touched\n"));
+    fx.commit("touch lockfile");
+    assert_eq!(
+        lines(&fx.run(&["--base", "main", "--to", "HEAD"])),
+        [] as [&str; 0]
+    );
+}
+
+#[test]
+fn a_user_global_glob_naming_the_lockfile_prints_every_member_for_any_lockfile_change() {
+    let fx = Fixture::new("basic", "");
+    fx.write(
+        "Cargo.toml",
+        "[workspace]\nresolver = \"3\"\nmembers = [\"crates/*\"]\n\n\
+         [workspace.metadata.affected]\nglobal = [\"Cargo.lock\"]\n",
+    );
+    fx.commit("declare the lockfile global");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    fx.edit_lockfile(|text| format!("{text}\n# touched\n"));
+    fx.commit("touch lockfile");
     assert_eq!(
         lines(&fx.run(&["--base", "main", "--to", "HEAD"])),
         ["a", "b"]
@@ -552,10 +674,8 @@ fn json_via_of_a_diamond_lists_both_changed_sides_sorted() {
 fn json_lists_the_lockfile_as_a_global_file_and_every_member_as_global_without_via() {
     let fx = Fixture::new("basic", "");
     fx.git(&["checkout", "-q", "-b", "feature"]);
-    let lockfile = fx.root.join("Cargo.lock");
-    let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
-    fx.write("Cargo.lock", &edited);
-    fx.commit("touch lockfile");
+    fx.downgrade_lockfile_format();
+    fx.commit("downgrade lockfile");
     let doc = parse_json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
 
     assert_eq!(doc["global_files"], json!(["Cargo.lock"]));
@@ -700,13 +820,11 @@ fn tree_shows_an_edited_non_member_path_dependency_as_a_labelled_root() {
 }
 
 #[test]
-fn tree_lists_every_member_as_a_leaf_under_the_edited_lockfile() {
+fn tree_lists_every_member_as_a_leaf_under_a_lockfile_that_cannot_be_narrowed() {
     let fx = Fixture::new("basic", "");
     fx.git(&["checkout", "-q", "-b", "feature"]);
-    let lockfile = fx.root.join("Cargo.lock");
-    let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
-    fx.write("Cargo.lock", &edited);
-    fx.commit("touch lockfile");
+    fx.downgrade_lockfile_format();
+    fx.commit("downgrade lockfile");
     assert_eq!(
         stdout(&fx.run(&["--format", "tree", "--base", "main", "--to", "HEAD"])),
         "Cargo.lock\n\

@@ -52,14 +52,18 @@ exactly.
   branch, `--from` an exact ref.
 - The `to` end defaults to the working tree: staged, unstaged and untracked files that are
   not gitignored. `--to HEAD` restricts it to committed work.
-- A **Changed Crate** is a workspace member whose own files appear in the Change Set.
+- A **Changed Crate** is a workspace member whose own files appear in the Change Set, or
+  one of whose **Locked Dependencies** changed.
 - A **Dependent** is a crate that depends on another, directly or transitively.
 - An **Affected Crate** is a Changed Crate, any workspace member that is a Dependent of
   one, or every workspace member when a **Global File** changed.
 - A **Global File** is a file outside any crate whose change makes every member an
-  Affected Crate: the workspace `Cargo.toml`, `Cargo.lock`, `rust-toolchain`,
-  `rust-toolchain.toml`, anything under `.cargo/`, plus the globs you add in
-  [`global`](#configuration).
+  Affected Crate: the workspace `Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml`,
+  anything under `.cargo/`, plus the globs you add in [`global`](#configuration).
+- A **Locked Dependency** is a third-party package `Cargo.lock` pins for a crate, directly
+  or through other third-party packages. A lockfile change makes Changed Crates of the
+  crates whose Locked Dependencies changed, and of nobody else; see
+  [The lockfile](#the-lockfile).
 - An **Extra Path** is a path outside a crate's directory that the crate declares as its
   own (a `proto/` directory its build script reads, say), so changes there make it a
   Changed Crate.
@@ -67,18 +71,47 @@ exactly.
 ### How a file maps to a crate
 
 Each file of the Change Set is tried against these rules in order. A Global File is
-claimed by no crate, so rule 1 ends the search; rules 2 and 3 can both apply to one file:
+claimed by no crate, so rule 1 ends the search; rules 3 and 4 can both apply to one file:
 
 1. **Global File**: a built-in global or a `global` glob matches. Every member becomes an
    Affected Crate with reason `global`.
-2. **Extra Path**: an `extra-paths` glob of some crate matches. That crate is Changed.
-3. **Crate directory**: the file lies under a crate's manifest directory; the deepest crate
+2. **Lockfile**: the file is the workspace's `Cargo.lock`. The crates whose Locked
+   Dependencies changed are Changed, and no other rule is tried.
+3. **Extra Path**: an `extra-paths` glob of some crate matches. That crate is Changed.
+4. **Crate directory**: the file lies under a crate's manifest directory; the deepest crate
    wins, and a root package owns the whole workspace like any other crate. If the file
    matches that crate's `ignore` globs it does not make the crate Changed.
-4. Otherwise the file is unmapped and ignored. `-v` lists it.
+5. Otherwise the file is unmapped and ignored. `-v` lists it.
 
 So a file inside crate `schema` that is also an Extra Path of `codegen` makes both crates
 Changed.
+
+### The lockfile
+
+`Cargo.lock` changes with almost every commit: a dependency update, but also a version
+bump of one of your own crates. So it is not a Global File. The tool compares the lockfile
+at the Base with the inspected one and makes a crate Changed only when a third-party
+package it uses was added, bumped, re-checksummed or given different dependencies, whether
+the crate uses it directly or through other third-party packages. Its Dependents follow
+through the dependency graph as for any Changed Crate. The crate reports `Cargo.lock` in
+its `changed_files`, and `-v` names the Locked Dependencies that changed:
+
+```console
+$ cargo affected --from before --to HEAD -v
+Cargo.lock -> base (locked dependency: left-pad 1.0.1)
+base
+left
+right
+top
+```
+
+The entries of your own crates are not compared, so bumping a crate's version claims
+nobody through the lockfile (`Cargo.lock -> no locked dependency changed`); the crate is
+Changed by its `Cargo.toml` as usual. A comment or a reordering claims nobody either.
+
+The lockfile is a Global File after all when the change cannot be narrowed: it is added or
+deleted, it does not parse, or it differs outside its packages (the format `version`, say).
+To make every lockfile change global again, name it: `global = ["Cargo.lock"]`.
 
 ### How affectedness spreads
 
@@ -188,11 +221,11 @@ foo (non-member)
 └── uses-foo
 ```
 
-And a Global File next to a Changed Crate, comparing a branch that edited both
-`Cargo.lock` and `crates/core/src/lib.rs` (`--to HEAD`, members abbreviated):
+And a Global File next to a Changed Crate, comparing a branch that edited both the
+workspace `Cargo.toml` and `crates/core/src/lib.rs` (`--to HEAD`, members abbreviated):
 
 ```text
-Cargo.lock
+Cargo.toml
 ├── app
 ├── base
 ├── build-user
@@ -241,8 +274,10 @@ $ cargo affected --format json
 
 For the diamond, `top` reports `"via": ["left", "right"]`; for the `core` edit above,
 `core` is `"reason": "changed"` with `"changed_files": ["crates/core/src/lib.rs"]` and
-`app` is `"reason": "dependent"` with `"via": ["mid"]`. When `Cargo.lock` changed,
-`global_files` is `["Cargo.lock"]` and every member has `"reason": "global"`. An empty
+`app` is `"reason": "dependent"` with `"via": ["mid"]`. When the workspace `Cargo.toml`
+changed, `global_files` is `["Cargo.toml"]` and every member has `"reason": "global"`. A
+crate whose Locked Dependencies changed is `"reason": "changed"` with `Cargo.lock` among
+its `changed_files`. An empty
 Change Set yields `"affected": []` and exits 0. The document is identical across runs for
 the same inputs, so it is safe to diff or cache.
 
@@ -255,14 +290,16 @@ fixture in this repository.
 
 | Key                                   | Type               | Root for globs | Meaning                                                                                        | Fixture                                                                               |
 | ------------------------------------- | ------------------ | -------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `[workspace.metadata.affected].global` | array of strings   | workspace root | Extra Global Files, extending the built-in set (`Cargo.toml`, `Cargo.lock`, `rust-toolchain`, `rust-toolchain.toml`, `.cargo/**`). A match makes every member affected with reason `global`. | [`tests/fixtures/globals`](tests/fixtures/globals/Cargo.toml) (`global = ["ci/**"]`) |
+| `[workspace.metadata.affected].global` | array of strings   | workspace root | Extra Global Files, extending the built-in set (`Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml`, `.cargo/**`). A match makes every member affected with reason `global`. | [`tests/fixtures/globals`](tests/fixtures/globals/Cargo.toml) (`global = ["ci/**"]`) |
 
 ```toml
 [workspace.metadata.affected]
 global = ["ci/**", "deny.toml"]
 ```
 
-The built-in set cannot be disabled.
+The built-in set cannot be disabled. `Cargo.lock` is not in it (see
+[The lockfile](#the-lockfile)); add it to `global` to have every lockfile change affect
+every member.
 
 ### Crate: Extra Paths and ignore
 
@@ -308,8 +345,9 @@ deeper in the crate.
 ```
 
 where `<file>` is relative to the workspace root and `<outcome>` is one of
-`<crate> (crate directory)`, `<crate> (extra path)`, `<crate> (ignored)`, `global file` or
-`unmapped`. A file claimed by two crates appears once per crate. When the workspace sits
+`<crate> (crate directory)`, `<crate> (extra path)`, `<crate> (ignored)`, `global file`,
+`unmapped` or, for the lockfile, `<crate> (locked dependency: <name> <version>, ...)` and
+`no locked dependency changed`. A file claimed by two crates appears once per crate. When the workspace sits
 below the git root, a file of the Change Set above the workspace root is listed as
 `../<path> -> unmapped`. From
 [`tests/fixtures/extra-paths`](tests/fixtures/extra-paths) after editing five files:
@@ -452,14 +490,17 @@ prints the crates to test, and an empty output means there is nothing to do.
   `(non-member)` root.
 - In the tree, a member whose own files changed is a root even when its reason is
   `global` (a Global File changed in the same Change Set), so its Dependents are still
-  explained; in the example above `core` is a root beside `Cargo.lock`.
-- Roots of all kinds sort together by name in byte order, so `Cargo.lock` precedes `core`.
+  explained; in the example above `core` is a root beside `Cargo.toml`.
+- Roots of all kinds sort together by name in byte order, so `Cargo.toml` precedes `core`.
 - `--charset` is accepted and ignored with `--format list|json`.
 - Crates present in the Change Set but unknown to `cargo metadata` (deleted crates,
   `workspace.exclude`d crates that nothing depends on) are not reported; their files fall
   through to the crate-directory and unmapped rules.
-- Narrowing a `Cargo.lock` edit to the crates that depend on the bumped third-party crate,
-  disabling the built-in Global Files and coloured output are out of scope for now.
+- A lockfile change is narrowed by what the lockfile says, which ignores features and
+  targets: a crate is claimed when a package it could use changed, even one behind a
+  feature it leaves off. `[patch]` and `[replace]` edits are in the workspace `Cargo.toml`,
+  a Global File, so they need no narrowing.
+- Disabling the built-in Global Files and coloured output are out of scope for now.
 
 ## Name
 

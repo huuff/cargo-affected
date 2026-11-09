@@ -13,7 +13,7 @@ The git state the Change Set is computed against: a merge-base with a branch, an
 _Avoid_: target, origin
 
 **Changed Crate**:
-A workspace member whose own files appear in the Change Set.
+A workspace member whose own files appear in the Change Set, or one of whose Locked Dependencies changed.
 _Avoid_: modified crate, touched crate, dirty crate
 
 **Dependent**:
@@ -25,8 +25,12 @@ A Changed Crate, any workspace member that is a Dependent of one, or every works
 _Avoid_: impacted crate, dirty crate
 
 **Global File**:
-A file outside any crate whose change makes every workspace member an Affected Crate, such as the workspace manifest or lockfile.
+A file outside any crate whose change makes every workspace member an Affected Crate, such as the workspace manifest. The lockfile is one only when its change cannot be narrowed to Locked Dependencies.
 _Avoid_: root file, shared file
+
+**Locked Dependency**:
+A third-party package the lockfile pins for a crate, used directly or through other third-party packages. A change to one makes the crate a Changed Crate.
+_Avoid_: external dependency, bumped crate, lock entry
 
 **Extra Path**:
 A path outside a crate's directory that the crate declares as its own, so changes there make it a Changed Crate.

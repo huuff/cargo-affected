@@ -4,12 +4,15 @@
 //! different between the *Base* and the inspected state; a *Changed Crate* is a workspace
 //! member whose own files appear in the Change Set; an *Affected Crate* is a Changed Crate
 //! or a workspace member that is a *Dependent* of one; a *Global File* is a file outside
-//! any crate, such as the lockfile, whose change makes every member an Affected Crate; an
-//! *Extra Path* is a path outside a crate's directory that the crate declares as its own.
+//! any crate, such as the workspace manifest, whose change makes every member an Affected
+//! Crate; an *Extra Path* is a path outside a crate's directory that the crate declares as
+//! its own; a *Locked Dependency* is a third-party package the lockfile pins for a crate,
+//! and a change to one makes the crates using it Changed Crates.
 
 pub mod affected;
 pub mod git;
 pub mod graph;
+pub mod lockfile;
 pub mod mapping;
 mod process;
 pub mod render;
@@ -17,7 +20,7 @@ pub mod report;
 pub mod workspace;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -59,14 +62,19 @@ pub fn report(opts: &Options) -> Result<Report> {
         None => To::Worktree,
     };
     let change_set = repo.change_set(&base, to.commit())?;
-
-    let workspace = Workspace::load(&workspace_root, opts.manifest_path.as_deref())?;
-    let workspace_in_repo = workspace
-        .root
+    let workspace_in_repo = workspace_root
         .strip_prefix(&repo.root)
         .context("the workspace root is not inside the git repository")?;
+    // Read before the workspace is loaded as well, for the same reason.
+    let locked_dependencies =
+        changed_locked_dependencies(&repo, &change_set, workspace_in_repo, &base, &to)?;
+
+    let workspace = Workspace::load(&workspace_root, opts.manifest_path.as_deref())?;
     let files = change_set.files_relative_to(workspace_in_repo);
-    let globals = mapping::GlobalFiles::new(&workspace.global_globs)?;
+    let mut globals = mapping::GlobalFiles::new(&workspace.global_globs)?;
+    if let Some(locked_dependencies) = locked_dependencies {
+        globals = globals.narrow_lockfile(locked_dependencies);
+    }
     let mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
 
     // A Global File makes every member affected; the mapping has already kept such
@@ -114,4 +122,29 @@ pub fn report(opts: &Options) -> Result<Report> {
         shown_dependents,
         file_outcomes: mapping.outcomes,
     })
+}
+
+/// When the workspace's lockfile is in the Change Set, the crates whose Locked
+/// Dependencies changed between its two ends. `None` when the lockfile did not change or
+/// the change cannot be narrowed (the lockfile is absent at either end, unreadable, or
+/// differs outside its packages); it is then a Global File.
+fn changed_locked_dependencies(
+    repo: &Repo,
+    change_set: &git::ChangeSet,
+    workspace_in_repo: &Path,
+    base: &str,
+    to: &To,
+) -> Result<Option<lockfile::LockedDependencies>> {
+    let lockfile = workspace_in_repo.join(mapping::GlobalFiles::LOCKFILE);
+    if !change_set.files.contains(&lockfile) {
+        return Ok(None);
+    }
+    let old = repo.file_at(base, &lockfile)?;
+    let new = match to {
+        To::Commit(commit) => repo.file_at(commit, &lockfile)?,
+        To::Worktree => std::fs::read_to_string(repo.root.join(&lockfile)).ok(),
+    };
+    Ok(old
+        .zip(new)
+        .and_then(|(old, new)| lockfile::changed_dependencies(&old, &new).ok()))
 }
