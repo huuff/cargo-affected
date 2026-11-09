@@ -1,0 +1,55 @@
+# Runs the test suite only for the crates a pull request affects.
+# Copy this file into `.github/workflows/`, then adjust the install step and the
+# test command to your repository.
+name: Affected crates
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      count: ${{ steps.affected.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The Base is the merge-base of the base branch and HEAD, so the clone
+          # must hold enough history to contain it. Full history is the simplest
+          # way; a shallow clone fails with "no merge-base" instead of guessing.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo affected
+        # Once published: cargo install --locked haf-cargo-affected
+        run: cargo install --locked --git <url of this repository>
+      - name: Compute the Affected Crates
+        id: affected
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          report=$(cargo affected --base "origin/$BASE_REF" --to HEAD --format json)
+          echo "$report"
+          {
+            echo "matrix=$(jq -c '{crate: [.affected[].name]}' <<<"$report")"
+            echo "count=$(jq '.affected | length' <<<"$report")"
+          } >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Test ${{ matrix.crate }}
+    needs: plan
+    # Skip, rather than fail, when nothing is affected: a matrix must not be empty.
+    # Equivalent: if: fromJSON(needs.plan.outputs.matrix).crate[0] != null
+    if: needs.plan.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p ${{ matrix.crate }}
