@@ -1,0 +1,14 @@
+# devenv (generated)
+.devenv/
+.devenv.flake.nix
+.pre-commit-config.yaml
+
+# direnv
+.direnv/
+
+# nix build outputs
+result
+result-*
+
+# rust
+target/

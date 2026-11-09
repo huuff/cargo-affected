@@ -1,0 +1,8 @@
+[package]
+name = "cargo-affected"
+version = "0.1.0"
+description = "Cargo subcommand that lists workspace crates affected by a change"
+license = "MIT"
+edition = "2024"
+
+[dependencies]
