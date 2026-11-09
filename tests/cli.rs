@@ -385,3 +385,49 @@ fn changed_only_still_prints_every_member_when_a_global_file_changed() {
     fx.write(".cargo/config.toml", "[build]\n");
     assert_eq!(lines(&fx.run(&["--changed-only"])), ["a", "b"]);
 }
+
+#[test]
+fn editing_an_extra_path_of_codegen_prints_codegen() {
+    let fx = Fixture::new("extra-paths", "");
+    fx.write("proto/service.proto", "syntax = \"proto3\";\n// edited\n");
+    assert_eq!(lines(&fx.run(&[])), ["codegen"]);
+}
+
+#[test]
+fn editing_an_ignored_file_of_lib_prints_nothing_while_its_source_prints_lib() {
+    let fx = Fixture::new("extra-paths", "");
+    fx.write("lib/README.md", "# lib\n\nEdited.\n");
+    fx.write("lib/docs/guide.md", "# Guide\n\nEdited.\n");
+    assert_eq!(lines(&fx.run(&[])), Vec::<String>::new());
+
+    let fx = Fixture::new("extra-paths", "");
+    fx.write("lib/src/lib.rs", "pub fn lib() { /* edited */ }\n");
+    assert_eq!(lines(&fx.run(&[])), ["lib"]);
+}
+
+#[test]
+fn an_extra_path_inside_another_crate_prints_both_crates() {
+    let fx = Fixture::new("extra-paths", "");
+    fx.write("schema/src/types.rs", "pub struct Greeting; // edited\n");
+    assert_eq!(lines(&fx.run(&[])), ["codegen", "schema"]);
+}
+
+#[test]
+fn a_crate_without_a_metadata_table_is_mapped_by_its_directory_as_before() {
+    let fx = Fixture::new("extra-paths", "");
+    fx.write("schema/src/lib.rs", "pub mod types; // edited\n");
+    assert_eq!(lines(&fx.run(&[])), ["schema"]);
+}
+
+#[test]
+fn malformed_package_metadata_is_an_error_naming_the_crate_and_the_setting() {
+    let fx = Fixture::new("malformed-metadata", "");
+    fx.write("broken/src/lib.rs", "pub fn broken() { /* edited */ }\n");
+    let out = fx.run(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("`broken`"), "{stderr}");
+    assert!(stderr.contains("extra-paths"), "{stderr}");
+    assert!(stderr.contains("array of strings"), "{stderr}");
+    assert_eq!(out.stdout, b"");
+}

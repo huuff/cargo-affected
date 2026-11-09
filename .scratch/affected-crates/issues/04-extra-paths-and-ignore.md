@@ -4,10 +4,14 @@
 
 **Blocked by:** 01 (Walking skeleton).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] A fixture where crate `codegen` declares `extra-paths = ["../proto/**"]`: editing a file under `proto/` prints `codegen`
-- [ ] A fixture where crate `lib` declares `ignore = ["README.md", "docs/**"]`: editing its readme prints nothing, editing its source prints `lib`
-- [ ] An Extra Path pointing inside another crate's directory makes both crates Changed
-- [ ] A crate with no metadata table behaves exactly as before
-- [ ] Malformed metadata (wrong type for `extra-paths`) is a clear error naming the crate
+- [x] A fixture where crate `codegen` declares `extra-paths = ["../proto/**"]`: editing a file under `proto/` prints `codegen`
+- [x] A fixture where crate `lib` declares `ignore = ["README.md", "docs/**"]`: editing its readme prints nothing, editing its source prints `lib`
+- [x] An Extra Path pointing inside another crate's directory makes both crates Changed
+- [x] A crate with no metadata table behaves exactly as before
+- [x] Malformed metadata (wrong type for `extra-paths`) is a clear error naming the crate
+
+## Comments
+
+- 2026-11-09, agent: implemented. `mapping::CrateDir` now carries the crate's `extra-paths` and `ignore` as compiled globs (`CrateDir::extra_paths`, `CrateDir::ignore`, both erroring with the crate name and setting), and `mapping::map_files` yields one `Outcome` per file and claiming crate (`GlobalFile`, `ExtraPath(crate)`, `CrateDirectory(crate)`, `Ignored(crate)`, `Unmapped`), the vocabulary ticket 07 prints under `-v`; `Mapping::changed()` and `Mapping::global_files()` derive the old views. A shared `mapping::Globs` builder now backs Global Files too. `workspace::CrateMetadata` is read from `[package.metadata.affected]` through the same `string_list` helper as `global`, so a wrong type is `` `[package.metadata.affected].extra-paths` of crate `broken` must be an array of strings ``; `serde_json` became a direct dependency to name `Value`. Fixtures `tests/fixtures/extra-paths` (`codegen` with `extra-paths = ["../proto/**", "../schema/src/types.rs"]`, `lib` with `ignore`, `schema` with no table) and `tests/fixtures/malformed-metadata`. Glob anchoring decided for `global`, `extra-paths` and `ignore` together, see `docs/adr/0002-glob-anchoring.md`: every glob is anchored at its root (workspace root or crate directory), `*`/`?` stay in one component, `**` spans directories, a leading `/` or `./` is stripped, and an `extra-paths` glob is rebased lexically onto the workspace root with `..` climbing above it an error. Surprise: a file matched by crate X's Extra Path but ignored by its owning crate Y yields `ExtraPath(X)` plus `Ignored(Y)`, so X is Changed and Y is not; recorded in a unit test. Still deferred from tickets 01/02: packages and Extra Paths outside the workspace root are never mapped (only files under the workspace root enter the mapping).

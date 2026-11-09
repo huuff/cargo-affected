@@ -216,6 +216,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "globset",
+ "serde_json",
  "tempfile",
 ]
 

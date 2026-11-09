@@ -4,7 +4,8 @@
 //! different between the *Base* and the inspected state; a *Changed Crate* is a workspace
 //! member whose own files appear in the Change Set; an *Affected Crate* is a Changed Crate
 //! or a workspace member that is a *Dependent* of one; a *Global File* is a file outside
-//! any crate, such as the lockfile, whose change makes every member an Affected Crate.
+//! any crate, such as the lockfile, whose change makes every member an Affected Crate; an
+//! *Extra Path* is a path outside a crate's directory that the crate declares as its own.
 
 pub mod affected;
 pub mod git;
@@ -59,16 +60,16 @@ pub fn affected_crates(opts: &Options) -> Result<Vec<AffectedCrate>> {
         .context("the workspace root is not inside the git repository")?;
     let files = change_set.files_under(workspace_in_repo);
     let globals = mapping::GlobalFiles::new(&workspace.global_globs)?;
-    let mapping = mapping::map_files(&workspace.crate_dirs(), &globals, files);
+    let mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
 
     // A Global File makes every member affected; the mapping has already kept such
     // files away from the crates, so a root package is not Changed by them.
-    let global = if mapping.global_files.is_empty() {
+    let global = if mapping.global_files().is_empty() {
         Vec::new()
     } else {
         workspace.member_names()
     };
-    let affected = affected::affected_crates(global, mapping.changed, &workspace.graph);
+    let affected = affected::affected_crates(global, mapping.changed(), &workspace.graph);
     Ok(affected
         .into_iter()
         .filter(|(name, _)| workspace.is_member(name))

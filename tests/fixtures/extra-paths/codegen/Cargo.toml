@@ -1,0 +1,8 @@
+[package]
+name = "codegen"
+version = "0.1.0"
+edition = "2024"
+
+# The build script reads the sibling `proto` directory and one file of `schema`.
+[package.metadata.affected]
+extra-paths = ["../proto/**", "../schema/src/types.rs"]

@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use cargo_metadata::{Metadata, MetadataCommand};
+use cargo_metadata::MetadataCommand;
+use serde_json::Value;
 
 use crate::graph::DependencyGraph;
 use crate::mapping::CrateDir;
@@ -27,6 +28,17 @@ pub struct Package {
     pub dir: PathBuf,
     /// Whether the package is a workspace member; only members are ever output.
     pub member: bool,
+    /// The crate's `[package.metadata.affected]` table.
+    pub affected: CrateMetadata,
+}
+
+/// What a crate declares in `[package.metadata.affected]`; globs relative to its directory.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CrateMetadata {
+    /// Extra Paths: globs, possibly starting with `../`, that make the crate Changed.
+    pub extra_paths: Vec<String>,
+    /// Globs for files inside the crate's directory that do not count as changes.
+    pub ignore: Vec<String>,
 }
 
 impl Workspace {
@@ -63,6 +75,7 @@ impl Workspace {
                         &pkg.name,
                     )?,
                     member: metadata.workspace_members.contains(&pkg.id),
+                    affected: crate_metadata(&pkg.name, &pkg.metadata)?,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -84,7 +97,9 @@ impl Workspace {
             }
         }
 
-        let global_globs = global_globs(&metadata)?;
+        let global_globs = string_list(&metadata.workspace_metadata, "global", || {
+            "`[workspace.metadata.affected].global`".to_string()
+        })?;
 
         Ok(Self {
             root,
@@ -97,12 +112,14 @@ impl Workspace {
     /// The packages as crate directories relative to the workspace root, the shape the
     /// mapping works on. A package outside the root keeps its absolute path and
     /// therefore never matches a workspace-relative file.
-    pub fn crate_dirs(&self) -> Vec<CrateDir> {
+    pub fn crate_dirs(&self) -> Result<Vec<CrateDir>> {
         self.packages
             .iter()
             .map(|p| {
                 let dir = p.dir.strip_prefix(&self.root).unwrap_or(&p.dir);
                 CrateDir::new(&p.name, dir)
+                    .extra_paths(&p.affected.extra_paths)?
+                    .ignore(&p.affected.ignore)
             })
             .collect()
     }
@@ -121,12 +138,26 @@ impl Workspace {
     }
 }
 
-/// The `global` list under `[workspace.metadata.affected]`, if any.
-fn global_globs(metadata: &Metadata) -> Result<Vec<String>> {
-    let Some(globs) = metadata.workspace_metadata.pointer("/affected/global") else {
+/// The `[package.metadata.affected]` table of crate `name`, given the package metadata.
+fn crate_metadata(name: &str, metadata: &Value) -> Result<CrateMetadata> {
+    let origin = |key: &str| format!("`[package.metadata.affected].{key}` of crate `{name}`");
+    Ok(CrateMetadata {
+        extra_paths: string_list(metadata, "extra-paths", || origin("extra-paths"))?,
+        ignore: string_list(metadata, "ignore", || origin("ignore"))?,
+    })
+}
+
+/// The string list at `affected.<key>` of a metadata table, or empty when absent.
+/// `origin` names the setting in the error for a value of the wrong type.
+fn string_list(
+    metadata: &Value,
+    key: &str,
+    origin: impl FnOnce() -> String,
+) -> Result<Vec<String>> {
+    let Some(value) = metadata.pointer(&format!("/affected/{key}")) else {
         return Ok(Vec::new());
     };
-    globs
+    value
         .as_array()
         .and_then(|items| {
             items
@@ -134,12 +165,54 @@ fn global_globs(metadata: &Metadata) -> Result<Vec<String>> {
                 .map(|item| item.as_str().map(str::to_string))
                 .collect::<Option<Vec<_>>>()
         })
-        .ok_or_else(|| {
-            anyhow!("`[workspace.metadata.affected].global` must be an array of strings")
-        })
+        .ok_or_else(|| anyhow!("{} must be an array of strings", origin()))
 }
 
 fn canonical_dir(dir: &Path, name: &str) -> Result<PathBuf> {
     dir.canonicalize()
         .with_context(|| format!("canonicalising the directory of `{name}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_crate_without_an_affected_table_declares_nothing() {
+        let got = crate_metadata(
+            "plain",
+            &json!({ "docs": { "rs": { "all-features": true } } }),
+        );
+        assert_eq!(got.unwrap(), CrateMetadata::default());
+    }
+
+    #[test]
+    fn extra_paths_and_ignore_are_read_from_the_affected_table() {
+        let got = crate_metadata(
+            "codegen",
+            &json!({ "affected": { "extra-paths": ["../proto/**"], "ignore": ["README.md"] } }),
+        );
+        assert_eq!(
+            got.unwrap(),
+            CrateMetadata {
+                extra_paths: vec!["../proto/**".to_string()],
+                ignore: vec!["README.md".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn a_setting_of_the_wrong_type_is_an_error_naming_the_crate_and_the_setting() {
+        let err =
+            crate_metadata("broken", &json!({ "affected": { "extra-paths": "x" } })).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("`broken`"), "{msg}");
+        assert!(msg.contains("extra-paths"), "{msg}");
+
+        let err = crate_metadata("broken", &json!({ "affected": { "ignore": [1] } })).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("`broken`"), "{msg}");
+        assert!(msg.contains("ignore"), "{msg}");
+    }
 }
