@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use cargo_metadata::MetadataCommand;
 use serde_json::Value;
 
@@ -42,6 +43,33 @@ pub struct CrateMetadata {
 }
 
 impl Workspace {
+    /// The canonical root of the workspace of the given manifest, or of the current
+    /// directory, found with `cargo locate-project`. Unlike [`Workspace::load`] this reads
+    /// no dependency graph and therefore never rewrites a stale `Cargo.lock`, so it is
+    /// safe to call before the Change Set is computed.
+    pub fn locate(manifest_path: Option<&Path>) -> Result<PathBuf> {
+        let mut cmd = Command::new(cargo());
+        cmd.args(["locate-project", "--workspace", "--message-format", "plain"]);
+        if let Some(path) = manifest_path {
+            cmd.arg("--manifest-path").arg(path);
+        }
+        let out = cmd.output().context("running `cargo locate-project`")?;
+        if !out.status.success() {
+            let reason = String::from_utf8_lossy(&out.stderr);
+            let reason = reason.trim();
+            bail!(
+                "no Cargo workspace found: {}",
+                reason.strip_prefix("error: ").unwrap_or(reason)
+            );
+        }
+        let manifest = String::from_utf8(out.stdout).context("cargo output is not UTF-8")?;
+        Path::new(manifest.trim_end())
+            .parent()
+            .context("the workspace manifest path has no parent")?
+            .canonicalize()
+            .context("canonicalising the workspace root")
+    }
+
     /// Loads the workspace of the given manifest, or of the current directory.
     pub fn load(manifest_path: Option<&Path>) -> Result<Self> {
         let mut cmd = MetadataCommand::new();
@@ -173,6 +201,12 @@ fn string_list(
                 .collect::<Option<Vec<_>>>()
         })
         .ok_or_else(|| anyhow!("{} must be an array of strings", origin()))
+}
+
+/// The `cargo` to run: the one that dispatched us when invoked as `cargo affected`, as
+/// `cargo_metadata` also does, else the one on `PATH`.
+fn cargo() -> std::ffi::OsString {
+    std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
 }
 
 fn canonical_dir(dir: &Path, name: &str) -> Result<PathBuf> {

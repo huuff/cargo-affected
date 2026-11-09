@@ -4,11 +4,15 @@
 
 **Blocked by:** 03 (Global Files), 04 (Extra Paths and ignore).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Without `-v`, a successful run writes nothing to stderr
-- [ ] With `-v`, each changed file appears on stderr with its mapping outcome, including an unmapped repository-root file and an ignored file
-- [ ] `--base does-not-exist` exits non-zero and the message names the ref
-- [ ] In a shallow clone with no merge-base, the error suggests fetching more history and no crates are printed
-- [ ] Neither `origin/main` nor `main` existing, with no `--base`, is an error that says how to pass a base
-- [ ] Running in a directory that is not a Cargo workspace is a clear error
+- [x] Without `-v`, a successful run writes nothing to stderr
+- [x] With `-v`, each changed file appears on stderr with its mapping outcome, including an unmapped repository-root file and an ignored file
+- [x] `--base does-not-exist` exits non-zero and the message names the ref
+- [x] In a shallow clone with no merge-base, the error suggests fetching more history and no crates are printed
+- [x] Neither `origin/main` nor `main` existing, with no `--base`, is an error that says how to pass a base
+- [x] Running in a directory that is not a Cargo workspace is a clear error
+
+## Comments
+
+- 2026-11-09, agent: implemented. `-v`/`--verbose` is a clap flag in `src/cli.rs` only; the library stays side-effect free and always returns the per-file mapping on the `Report` as a new `#[serde(skip)] files: Vec<mapping::FileOutcome>` (sorted by file, one entry per claiming crate), which `render::diagnostics(&Report)` turns into one line per file and `main.rs` writes to stderr before stdout when the flag is set. `Options` did not get a `verbose` field: the library never prints, so the flag has nothing to switch there. Line format, via `Display` on `mapping::Outcome` and `FileOutcome`: `<file> -> <crate> (crate directory)`, `<crate> (extra path)`, `<crate> (ignored)`, `global file`, `unmapped`. Errors in `src/git.rs`: a new `git_output` returns git's exit status so `merge_base` and `Repo::discover` produce their own messages instead of the generic `git ... failed:` chain; no merge-base now says the clone is shallow or the histories unrelated and suggests `git fetch --unshallow` / `git fetch --deepen=<n>` / `--base <ref>`; outside git says `<dir> is not inside a git repository` with a hint. The missing-ref and missing-default-branch messages already existed and are now pinned by tests (`--from` as well as `--base`). Outside a workspace: ticket 03's stale-lockfile note is fixed by ordering, `lib.rs::report` now calls the new `Workspace::locate` (`cargo locate-project --workspace`, which parses manifests but never resolves or rewrites `Cargo.lock`) to find the root, discovers the repo and computes the Change Set, and only then runs `cargo metadata`; a manifest edit that stales the lockfile therefore reports only that crate (`a_manifest_edit_that_stales_the_lockfile_...`). The cost is one extra `cargo` process (~10 ms). `cargo metadata` still rewrites the lockfile on disk as a side effect after the diff; ticket 08 should document that. The no-workspace error is `no Cargo workspace found: could not find \`Cargo.toml\` in \`<dir>\` or any parent directory` (cargo's own words). Tests: `each_outcome_renders_...` (mapping), `diagnostics_print_...` (render), `verbose_is_off_by_default_...` (cli), and eight integration tests in `tests/cli.rs` (silent stderr, `-v` on the `extra-paths` fixture with all five outcomes, `--from` missing ref, shallow clone via `Fixture::shallow_clone` = `git clone --depth 1 --no-single-branch file://...`, renamed `main` without `--base`, empty git repo, `Fixture::unversioned` copy without `git init`, stale lockfile). Surprise: a `file://` URL is required for `--depth` to take effect, a plain path clone ignores it.

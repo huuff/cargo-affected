@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use serde::{Serialize, Serializer};
 
 use crate::affected::Reason;
+use crate::mapping::FileOutcome;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Report {
@@ -29,6 +30,10 @@ pub struct Report {
     /// without the graph.
     #[serde(skip)]
     pub dependents: BTreeMap<String, Vec<String>>,
+    /// Where each file of the Change Set under the workspace root landed, sorted by file;
+    /// what `-v` explains on stderr. Never serialised: it is a diagnostic, not a result.
+    #[serde(skip)]
+    pub files: Vec<FileOutcome>,
 }
 
 /// The inspected end of the Change Set: a commit, or the working tree.

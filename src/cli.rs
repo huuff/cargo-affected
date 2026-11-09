@@ -39,6 +39,11 @@ pub struct Cli {
     /// Characters drawing the connectors of `--format tree`.
     #[arg(long, value_enum, default_value_t)]
     pub charset: Charset,
+
+    /// Explain on stderr, for every file in the Change Set, which crate it mapped to and
+    /// why: crate directory, extra path, global file, ignored or unmapped.
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
@@ -162,6 +167,21 @@ mod tests {
         );
         let err = Cli::try_parse_from(["cargo-affected", "--charset", "utf8"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn verbose_is_off_by_default_and_has_a_short_flag() {
+        assert!(!Cli::try_parse_from(["cargo-affected"]).unwrap().verbose);
+        assert!(
+            Cli::try_parse_from(["cargo-affected", "-v"])
+                .unwrap()
+                .verbose
+        );
+        assert!(
+            Cli::try_parse_from(["cargo-affected", "--verbose"])
+                .unwrap()
+                .verbose
+        );
     }
 
     #[test]

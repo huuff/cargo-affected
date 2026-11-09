@@ -19,6 +19,14 @@ impl Fixture {
     /// git root, and commits everything as the baseline on `main`. An empty `workspace`
     /// puts the workspace at the git root.
     fn new(name: &str, workspace: &str) -> Self {
+        let fixture = Self::unversioned(name, workspace);
+        fixture.git(&["init", "-q", "-b", "main"]);
+        fixture.commit("baseline");
+        fixture
+    }
+
+    /// Copies the fixture and generates its lockfile, without putting it under git.
+    fn unversioned(name: &str, workspace: &str) -> Self {
         let dir = TempDir::new().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let src = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -30,9 +38,7 @@ impl Fixture {
             workspace: root.join(workspace),
             root,
         };
-        fixture.git(&["init", "-q", "-b", "main"]);
         fixture.cargo_in_workspace(&["generate-lockfile", "--offline"]);
-        fixture.commit("baseline");
         fixture
     }
 
@@ -77,10 +83,26 @@ impl Fixture {
 
     /// Runs `cargo-affected` directly, in `cwd`.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Output {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-affected"));
-        cmd.args(args).current_dir(cwd);
-        git_env(&mut cmd);
-        cmd.output().unwrap()
+        run_binary(cwd, args)
+    }
+
+    /// Clones the repository with `--depth 1`, every branch, into its own temp dir, so
+    /// the branches share no history there, as in a CI checkout.
+    fn shallow_clone(&self) -> (TempDir, PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let clone = dir.path().canonicalize().unwrap().join("clone");
+        let url = format!("file://{}", self.root.display());
+        let out = git_command(dir.path())
+            .args(["clone", "-q", "--depth", "1", "--no-single-branch", &url])
+            .arg(&clone)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git clone failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (dir, clone)
     }
 
     /// Runs `cargo affected`, letting Cargo dispatch to the binary found on `PATH`.
@@ -97,6 +119,14 @@ impl Fixture {
         git_env(&mut cmd);
         cmd.output().unwrap()
     }
+}
+
+/// Runs `cargo-affected` directly, in `cwd`.
+fn run_binary(cwd: &Path, args: &[&str]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_cargo-affected"));
+    cmd.args(args).current_dir(cwd);
+    git_env(&mut cmd);
+    cmd.output().unwrap()
 }
 
 fn cargo() -> String {
@@ -710,4 +740,129 @@ fn tree_with_changed_only_keeps_every_member_under_a_global_file() {
          ├── a\n\
          └── b\n"
     );
+}
+
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// Asserts the run failed with exit code 1 and printed nothing on stdout, and returns
+/// what it said on stderr.
+fn error_of(out: &Output) -> String {
+    assert_eq!(out.status.code(), Some(1), "stderr:\n{}", stderr(out));
+    assert_eq!(
+        out.stdout,
+        b"",
+        "stdout:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    stderr(out)
+}
+
+#[test]
+fn a_successful_run_without_verbose_writes_nothing_to_stderr() {
+    let fx = Fixture::new("extra-paths", "");
+    fx.write("lib/README.md", "# lib\n\nEdited.\n");
+    fx.write("LICENSE", "MIT\n");
+    fx.write("schema/src/lib.rs", "pub mod types; // edited\n");
+    let out = fx.run(&[]);
+    assert_eq!(lines(&out), ["schema"]);
+    assert_eq!(stderr(&out), "");
+}
+
+#[test]
+fn verbose_lists_every_changed_file_with_its_mapping_outcome_on_stderr() {
+    let fx = Fixture::new("extra-paths", "");
+    fx.write(".cargo/config.toml", "[build]\n");
+    fx.write("LICENSE", "MIT\n");
+    fx.write("lib/README.md", "# lib\n\nEdited.\n");
+    fx.write("proto/service.proto", "syntax = \"proto3\"; // edited\n");
+    fx.write("schema/src/lib.rs", "pub mod types; // edited\n");
+    let out = fx.run(&["-v"]);
+    assert_eq!(lines(&out), ["codegen", "lib", "schema"]);
+    assert_eq!(
+        stderr(&out),
+        "\
+.cargo/config.toml -> global file
+LICENSE -> unmapped
+lib/README.md -> lib (ignored)
+proto/service.proto -> codegen (extra path)
+schema/src/lib.rs -> schema (crate directory)
+"
+    );
+    let long = fx.run(&["--verbose"]);
+    assert_eq!(stderr(&long), stderr(&out));
+}
+
+#[test]
+fn a_from_ref_that_does_not_exist_is_an_error_naming_the_ref() {
+    let fx = Fixture::new("basic", "");
+    let msg = error_of(&fx.run(&["--from", "v9", "--to", "HEAD"]));
+    assert!(msg.contains("`v9`"), "{msg}");
+    assert!(msg.contains("does not exist"), "{msg}");
+}
+
+#[test]
+fn a_shallow_clone_without_a_merge_base_is_an_error_suggesting_to_fetch_more_history() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    fx.write("crates/a/src/lib.rs", "pub fn a() { /* on branch */ }\n");
+    fx.commit("touch a");
+    let (_dir, clone) = fx.shallow_clone();
+
+    let msg = error_of(&fx.run_in(&clone, &["--to", "HEAD"]));
+    assert!(msg.contains("no merge-base"), "{msg}");
+    assert!(msg.contains("`origin/main`"), "{msg}");
+    assert!(msg.contains("fetch more history"), "{msg}");
+    assert!(msg.contains("git fetch --unshallow"), "{msg}");
+    assert!(!msg.contains("failed:"), "{msg}");
+}
+
+#[test]
+fn no_default_base_branch_without_base_is_an_error_saying_how_to_pass_one() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["branch", "-m", "main", "trunk"]);
+    fx.write("crates/a/src/lib.rs", "pub fn a() { /* edited */ }\n");
+
+    let msg = error_of(&fx.run(&[]));
+    assert!(msg.contains("`origin/main`"), "{msg}");
+    assert!(msg.contains("`main`"), "{msg}");
+    assert!(msg.contains("--base"), "{msg}");
+    assert_eq!(lines(&fx.run(&["--base", "trunk"])), ["a"]);
+}
+
+#[test]
+fn a_git_repository_without_a_cargo_workspace_is_a_clear_error() {
+    let dir = TempDir::new().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let out = git_command(&root)
+        .args(["init", "-q", "-b", "main"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    let msg = error_of(&run_binary(&root, &[]));
+    assert!(msg.contains("Cargo.toml"), "{msg}");
+    assert!(msg.contains(&root.display().to_string()), "{msg}");
+    assert!(!msg.contains("origin/main"), "{msg}");
+}
+
+#[test]
+fn a_workspace_outside_a_git_repository_is_a_clear_error() {
+    let fx = Fixture::unversioned("basic", "");
+    let msg = error_of(&fx.run(&[]));
+    assert!(msg.contains("not inside a git repository"), "{msg}");
+    assert!(msg.contains(&fx.root.display().to_string()), "{msg}");
+}
+
+#[test]
+fn a_manifest_edit_that_stales_the_lockfile_does_not_turn_the_lockfile_into_a_global_file() {
+    let fx = Fixture::new("basic", "");
+    fx.write(
+        "crates/a/Cargo.toml",
+        "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nb = { path = \"../b\" }\n",
+    );
+    let out = fx.run(&["-v"]);
+    assert_eq!(lines(&out), ["a"]);
+    assert_eq!(stderr(&out), "crates/a/Cargo.toml -> a (crate directory)\n");
 }

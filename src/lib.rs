@@ -43,8 +43,10 @@ pub struct Options {
 /// Affected Crates that are workspace members, sorted by name. With `changed_only`, the
 /// crates affected merely as Dependents are left out.
 pub fn report(opts: &Options) -> Result<Report> {
-    let workspace = Workspace::load(opts.manifest_path.as_deref())?;
-    let repo = Repo::discover(&workspace.root)?;
+    // The Change Set is computed before the workspace is loaded: `cargo metadata` rewrites
+    // a stale `Cargo.lock`, which must not then show up as a changed Global File.
+    let workspace_root = Workspace::locate(opts.manifest_path.as_deref())?;
+    let repo = Repo::discover(&workspace_root)?;
     let base = match &opts.from {
         Some(rev) => Base::Exact(rev.clone()),
         None => Base::MergeBase(opts.base.clone()),
@@ -56,13 +58,14 @@ pub fn report(opts: &Options) -> Result<Report> {
     };
     let change_set = repo.change_set(&base, to.commit())?;
 
+    let workspace = Workspace::load(opts.manifest_path.as_deref())?;
     let workspace_in_repo = workspace
         .root
         .strip_prefix(&repo.root)
         .context("the workspace root is not inside the git repository")?;
     let files = change_set.files_under(workspace_in_repo);
     let globals = mapping::GlobalFiles::new(&workspace.global_globs)?;
-    let mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
+    let mut mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
 
     // A Global File makes every member affected; the mapping has already kept such
     // files away from the crates, so a root package is not Changed by them.
@@ -107,5 +110,6 @@ pub fn report(opts: &Options) -> Result<Report> {
         affected: members,
         changed_non_members,
         dependents,
+        files: std::mem::take(&mut mapping.outcomes),
     })
 }

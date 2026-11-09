@@ -16,6 +16,7 @@
 //! whether the file counts for the crate whose directory contains it.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
@@ -197,10 +198,31 @@ pub enum Outcome {
     Unmapped,
 }
 
+/// Renders as the crate and how it claimed the file, e.g. `a (crate directory)`, or
+/// `global file` / `unmapped` when no crate is involved.
+impl fmt::Display for Outcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GlobalFile => f.write_str("global file"),
+            Self::ExtraPath(name) => write!(f, "{name} (extra path)"),
+            Self::CrateDirectory(name) => write!(f, "{name} (crate directory)"),
+            Self::Ignored(name) => write!(f, "{name} (ignored)"),
+            Self::Unmapped => f.write_str("unmapped"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FileOutcome {
     pub file: PathBuf,
     pub outcome: Outcome,
+}
+
+/// The diagnostic line `-v` prints for the file: `<file> -> <outcome>`.
+impl fmt::Display for FileOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} -> {}", self.file.display(), self.outcome)
+    }
 }
 
 /// Where the files of the Change Set landed, sorted by file and deduplicated.
@@ -312,6 +334,37 @@ mod tests {
         files: impl IntoIterator<Item = &'a Path>,
     ) -> BTreeSet<String> {
         map_files(crates, &GlobalFiles::new(&[]).unwrap(), files).changed()
+    }
+
+    #[test]
+    fn each_outcome_renders_as_file_arrow_crate_and_how_it_was_claimed() {
+        let rendered = |file: &str, outcome: Outcome| {
+            FileOutcome {
+                file: PathBuf::from(file),
+                outcome,
+            }
+            .to_string()
+        };
+        assert_eq!(
+            rendered("Cargo.lock", Outcome::GlobalFile),
+            "Cargo.lock -> global file"
+        );
+        assert_eq!(
+            rendered("proto/x.proto", Outcome::ExtraPath("codegen".into())),
+            "proto/x.proto -> codegen (extra path)"
+        );
+        assert_eq!(
+            rendered("crates/a/src/lib.rs", Outcome::CrateDirectory("a".into())),
+            "crates/a/src/lib.rs -> a (crate directory)"
+        );
+        assert_eq!(
+            rendered("crates/lib/README.md", Outcome::Ignored("lib".into())),
+            "crates/lib/README.md -> lib (ignored)"
+        );
+        assert_eq!(
+            rendered("LICENSE", Outcome::Unmapped),
+            "LICENSE -> unmapped"
+        );
     }
 
     #[test]

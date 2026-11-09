@@ -1,7 +1,7 @@
 //! Talks to git: resolves the Base and computes the Change Set.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
 
@@ -42,9 +42,14 @@ impl ChangeSet {
 impl Repo {
     /// Finds the repository containing `dir`.
     pub fn discover(dir: &Path) -> Result<Self> {
-        let out = run_git(dir, &["rev-parse", "--show-toplevel"])
-            .with_context(|| format!("{} is not inside a git repository", dir.display()))?;
-        let root = PathBuf::from(out.trim_end())
+        let out = git_output(dir, &["rev-parse", "--show-toplevel"])?;
+        if !out.status.success() {
+            bail!(
+                "{} is not inside a git repository; run `cargo affected` from a checkout or pass `--manifest-path`",
+                dir.display()
+            );
+        }
+        let root = PathBuf::from(stdout(out)?.trim_end())
             .canonicalize()
             .context("canonicalising the git root")?;
         Ok(Self { root })
@@ -110,14 +115,18 @@ impl Repo {
         Ok(out.trim_end().to_string())
     }
 
+    /// The merge-base of `branch` and HEAD. Git exits 1 without a word when the two share
+    /// no history, which in CI almost always means a shallow clone, so that case gets its
+    /// own message instead of a bare `git merge-base failed`.
     fn merge_base(&self, branch: &str) -> Result<String> {
         self.rev_parse(branch)?;
-        let out = self.git(&["merge-base", branch, "HEAD"]).with_context(|| {
-            format!(
-                "no merge-base between `{branch}` and HEAD; fetch more history (e.g. `git fetch --unshallow`)"
-            )
-        })?;
-        Ok(out.trim_end().to_string())
+        let out = git_output(&self.root, &["merge-base", branch, "HEAD"])?;
+        if !out.status.success() {
+            bail!(
+                "no merge-base between `{branch}` and HEAD: the clone is shallow or the histories are unrelated; fetch more history (e.g. `git fetch --unshallow`, or `git fetch --deepen=<n>`) or pass another base with `--base <ref>`"
+            );
+        }
+        Ok(stdout(out)?.trim_end().to_string())
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
@@ -141,12 +150,9 @@ fn parse_name_status(out: &str) -> Vec<PathBuf> {
     files
 }
 
+/// Runs git and returns its stdout, failing with git's own words on a non-zero exit.
 fn run_git(cwd: &Path, args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .context("running git")?;
+    let out = git_output(cwd, args)?;
     if !out.status.success() {
         bail!(
             "git {} failed: {}",
@@ -154,6 +160,20 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String> {
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }
+    stdout(out)
+}
+
+/// Runs git and returns whatever it did, so the caller can read a non-zero exit itself.
+/// Only failing to start git at all is an error here.
+fn git_output(cwd: &Path, args: &[&str]) -> Result<Output> {
+    Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .context("running git")
+}
+
+fn stdout(out: Output) -> Result<String> {
     String::from_utf8(out.stdout).context("git output is not UTF-8")
 }
 

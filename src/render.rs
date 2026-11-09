@@ -72,6 +72,12 @@ pub fn render(report: &Report, format: Format) -> Result<String> {
     }
 }
 
+/// The `-v` diagnostics: one line per file of the Change Set saying where it landed, in
+/// the report's order; ends with a newline unless empty.
+pub fn diagnostics(report: &Report) -> String {
+    report.files.iter().map(|f| format!("{f}\n")).collect()
+}
+
 fn list(report: &Report) -> String {
     report
         .affected
@@ -213,6 +219,7 @@ mod tests {
 
     use super::*;
     use crate::affected::Reason;
+    use crate::mapping::{FileOutcome, Outcome};
     use crate::report::{AffectedCrate, To};
 
     fn report(to: To) -> Report {
@@ -238,7 +245,30 @@ mod tests {
             ],
             changed_non_members: Vec::new(),
             dependents: BTreeMap::new(),
+            files: vec![
+                FileOutcome {
+                    file: PathBuf::from("Cargo.lock"),
+                    outcome: Outcome::GlobalFile,
+                },
+                FileOutcome {
+                    file: PathBuf::from("crates/core/src/lib.rs"),
+                    outcome: Outcome::CrateDirectory("core".to_string()),
+                },
+            ],
         }
+    }
+
+    #[test]
+    fn diagnostics_print_one_line_per_file_outcome_and_nothing_for_no_files() {
+        assert_eq!(
+            diagnostics(&report(To::Worktree)),
+            "Cargo.lock -> global file\ncrates/core/src/lib.rs -> core (crate directory)\n"
+        );
+        let none = Report {
+            files: Vec::new(),
+            ..report(To::Worktree)
+        };
+        assert_eq!(diagnostics(&none), "");
     }
 
     #[test]
@@ -320,6 +350,7 @@ mod tests {
             ],
             changed_non_members: Vec::new(),
             dependents: edges(&[("core", &["mid"]), ("mid", &["app"])]),
+            files: Vec::new(),
         }
     }
 
