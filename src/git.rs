@@ -5,6 +5,8 @@ use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
 
+use crate::process::{stderr_of, stdout_of};
+
 /// Branches tried, in order, when no `--base` is given.
 pub const DEFAULT_BASE_BRANCHES: [&str; 2] = ["origin/main", "main"];
 
@@ -188,11 +190,7 @@ fn checked(args: &[&str], out: Output) -> Result<String> {
     if !out.status.success() {
         bail!("git {} failed: {}", args.join(" "), stderr_of(&out));
     }
-    String::from_utf8(out.stdout).context("git output is not UTF-8")
-}
-
-fn stderr_of(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).trim().to_string()
+    stdout_of("git", out)
 }
 
 #[cfg(test)]

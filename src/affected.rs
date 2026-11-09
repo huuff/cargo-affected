@@ -75,8 +75,9 @@ pub fn via(
 /// admits, sorted by name; crates with none are left out. These are its affected direct
 /// Dependents, except that a Dependent not shown (a non-member path crate) is looked
 /// through to its own Dependents, so a member reached only through such crates still
-/// hangs under the closest shown one. The inverse of [`via`] for the tree.
-pub fn dependents(
+/// hangs under the closest shown one. The inverse of [`via`] for the tree. Unlike
+/// `DependencyGraph::dependents`, this knows about affectedness and about what is shown.
+pub fn shown_dependents(
     affected: &BTreeMap<String, Reason>,
     graph: &DependencyGraph,
     is_shown: impl Fn(&str) -> bool,
@@ -86,14 +87,14 @@ pub fn dependents(
         .map(|name| {
             (
                 name.clone(),
-                shown_dependents(name, affected, graph, &is_shown),
+                shown_dependents_of(name, affected, graph, &is_shown),
             )
         })
         .filter(|(_, dependents)| !dependents.is_empty())
         .collect()
 }
 
-fn shown_dependents(
+fn shown_dependents_of(
     name: &str,
     affected: &BTreeMap<String, Reason>,
     graph: &DependencyGraph,
@@ -226,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn dependents_lists_the_affected_direct_dependents_the_filter_admits() {
+    fn shown_dependents_lists_the_affected_direct_dependents_the_filter_admits() {
         // `foo` is changed; `uses-foo` and `vendored` depend on it, `app` on `uses-foo`,
         // and `bystander` on nothing affected. `vendored` is excluded by the filter.
         let g = graph(&[
@@ -236,7 +237,7 @@ mod tests {
             ("bystander", "util"),
         ]);
         let affected = affected_crates([], strings(&["foo"]), &g);
-        let got = dependents(&affected, &g, |name| name != "vendored");
+        let got = shown_dependents(&affected, &g, |name| name != "vendored");
         assert_eq!(
             got,
             BTreeMap::from([
@@ -247,12 +248,12 @@ mod tests {
     }
 
     #[test]
-    fn dependents_reaches_through_a_crate_the_filter_hides_to_the_next_one_it_admits() {
+    fn shown_dependents_reaches_through_a_crate_the_filter_hides_to_the_next_one_it_admits() {
         // `foo` -> `bar` -> `baz`, where `foo` and `bar` are non-members the tree never
         // shows below a root: `baz` must hang under `foo` rather than vanish.
         let g = graph(&[("bar", "foo"), ("baz", "bar"), ("uses-foo", "foo")]);
         let affected = affected_crates([], strings(&["foo"]), &g);
-        let got = dependents(&affected, &g, |name| name != "foo" && name != "bar");
+        let got = shown_dependents(&affected, &g, |name| name != "foo" && name != "bar");
         assert_eq!(
             got,
             BTreeMap::from([
@@ -263,11 +264,11 @@ mod tests {
     }
 
     #[test]
-    fn dependents_terminates_on_a_cycle_through_a_hidden_crate() {
+    fn shown_dependents_terminates_on_a_cycle_through_a_hidden_crate() {
         // `a` and hidden `n` depend on each other; `a` is reached again through `n`.
         let g = graph(&[("n", "a"), ("a", "n")]);
         let affected = affected_crates([], strings(&["a"]), &g);
-        let got = dependents(&affected, &g, |name| name != "n");
+        let got = shown_dependents(&affected, &g, |name| name != "n");
         assert_eq!(
             got,
             BTreeMap::from([

@@ -24,12 +24,12 @@ pub struct Report {
     /// only members are output in the other formats.
     #[serde(skip)]
     pub changed_non_members: Vec<String>,
-    /// Crate name -> its direct Dependents among the affected members, sorted by name;
-    /// crates without one are absent, and the whole map is empty with `changed_only`.
-    /// Tree only: the inverse of `via`, so the tree can be walked downward from a root
-    /// without the graph.
+    /// Crate name -> the nearest affected Dependents the tree shows under it (the
+    /// members, with non-member crates looked through), sorted by name; crates without
+    /// one are absent, and the whole map is empty with `changed_only`. Tree only: the
+    /// inverse of `via`, so the tree can be walked downward from a root without the graph.
     #[serde(skip)]
-    pub dependents: BTreeMap<String, Vec<String>>,
+    pub shown_dependents: BTreeMap<String, Vec<String>>,
     /// Where each file of the Change Set landed, as paths relative to the workspace root
     /// (a file above it starts with `..` and is unmapped), sorted by file; what `-v`
     /// explains on stderr. Never serialised: it is a diagnostic, not a result.

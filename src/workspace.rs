@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::graph::DependencyGraph;
 use crate::mapping::{CrateDir, GlobalFiles, crate_setting};
+use crate::process::{stderr_of, stdout_of};
 
 pub struct Workspace {
     /// Canonical path of the workspace root.
@@ -56,14 +57,13 @@ impl Workspace {
         }
         let out = cmd.output().context("running `cargo locate-project`")?;
         if !out.status.success() {
-            let reason = String::from_utf8_lossy(&out.stderr);
-            let reason = reason.trim();
+            let reason = stderr_of(&out);
             bail!(
                 "no Cargo workspace found: {}",
-                reason.strip_prefix("error: ").unwrap_or(reason)
+                reason.strip_prefix("error: ").unwrap_or(&reason)
             );
         }
-        let manifest = String::from_utf8(out.stdout).context("cargo output is not UTF-8")?;
+        let manifest = stdout_of("cargo", out)?;
         Path::new(manifest.trim_end())
             .parent()
             .context("the workspace manifest path has no parent")?

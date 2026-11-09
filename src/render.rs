@@ -175,7 +175,7 @@ impl Tree<'_> {
         self.out.push('\n');
         let children = self
             .report
-            .dependents
+            .shown_dependents
             .get(name)
             .map_or(&[][..], Vec::as_slice);
         for (i, child) in children.iter().enumerate() {
@@ -248,7 +248,7 @@ mod tests {
                 },
             ],
             changed_non_members: Vec::new(),
-            dependents: BTreeMap::new(),
+            shown_dependents: BTreeMap::new(),
             file_outcomes: vec![
                 FileOutcome {
                     file: PathBuf::from("Cargo.lock"),
@@ -353,7 +353,7 @@ mod tests {
                 affected_crate("mid", Reason::Dependent, &[]),
             ],
             changed_non_members: Vec::new(),
-            dependents: edges(&[("core", &["mid"]), ("mid", &["app"])]),
+            shown_dependents: edges(&[("core", &["mid"]), ("mid", &["app"])]),
             file_outcomes: Vec::new(),
         }
     }
@@ -377,7 +377,7 @@ mod tests {
                 affected_crate("right", Reason::Dependent, &[]),
                 affected_crate("top", Reason::Dependent, &[]),
             ],
-            dependents: edges(&[
+            shown_dependents: edges(&[
                 ("base", &["left", "right"]),
                 ("left", &["top"]),
                 ("right", &["top"]),
@@ -406,7 +406,7 @@ mod tests {
                 affected_crate("uses-foo", Reason::Dependent, &[]),
             ],
             changed_non_members: vec!["foo".to_string()],
-            dependents: edges(&[("foo", &["uses-foo"]), ("uses-foo", &["app"])]),
+            shown_dependents: edges(&[("foo", &["uses-foo"]), ("uses-foo", &["app"])]),
             ..transitive()
         };
         assert_eq!(
@@ -426,7 +426,7 @@ mod tests {
                 affected_crate("core", Reason::Global, &[]),
                 affected_crate("mid", Reason::Global, &[]),
             ],
-            dependents: edges(&[("core", &["mid"]), ("mid", &["app"])]),
+            shown_dependents: edges(&[("core", &["mid"]), ("mid", &["app"])]),
             ..transitive()
         };
         assert_eq!(
@@ -505,7 +505,7 @@ mod tests {
                 &["crates/core/src/lib.rs"],
             )],
             changed_non_members: vec!["foo".to_string()],
-            dependents: BTreeMap::new(),
+            shown_dependents: BTreeMap::new(),
             ..transitive()
         };
         assert_eq!(
@@ -518,7 +518,7 @@ mod tests {
     fn tree_of_an_empty_report_is_empty() {
         let empty = Report {
             affected: Vec::new(),
-            dependents: BTreeMap::new(),
+            shown_dependents: BTreeMap::new(),
             ..transitive()
         };
         assert_eq!(render(&empty, Format::Tree(Charset::Unicode)).unwrap(), "");

@@ -200,6 +200,17 @@ pub enum Outcome {
     Unmapped,
 }
 
+impl Outcome {
+    /// The crate this outcome makes a Changed Crate: the one whose directory holds the
+    /// file or whose Extra Path matched it. `None` for the other outcomes.
+    pub fn changed_crate(&self) -> Option<&str> {
+        match self {
+            Self::ExtraPath(name) | Self::CrateDirectory(name) => Some(name),
+            Self::GlobalFile | Self::Ignored(_) | Self::Unmapped => None,
+        }
+    }
+}
+
 /// Renders as the crate and how it claimed the file, e.g. `a (crate directory)`, or
 /// `global file` / `unmapped` when no crate is involved.
 impl fmt::Display for Outcome {
@@ -249,10 +260,7 @@ impl Mapping {
         let mut files: Vec<PathBuf> = self
             .outcomes
             .iter()
-            .filter(|o| match &o.outcome {
-                Outcome::ExtraPath(name) | Outcome::CrateDirectory(name) => name == crate_name,
-                Outcome::GlobalFile | Outcome::Ignored(_) | Outcome::Unmapped => false,
-            })
+            .filter(|o| o.outcome.changed_crate() == Some(crate_name))
             .map(|o| o.file.clone())
             .collect();
         files.dedup();
@@ -263,10 +271,8 @@ impl Mapping {
     pub fn changed(&self) -> BTreeSet<String> {
         self.outcomes
             .iter()
-            .filter_map(|o| match &o.outcome {
-                Outcome::ExtraPath(name) | Outcome::CrateDirectory(name) => Some(name.clone()),
-                Outcome::GlobalFile | Outcome::Ignored(_) | Outcome::Unmapped => None,
-            })
+            .filter_map(|o| o.outcome.changed_crate())
+            .map(str::to_string)
             .collect()
     }
 }

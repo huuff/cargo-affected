@@ -11,6 +11,7 @@ pub mod affected;
 pub mod git;
 pub mod graph;
 pub mod mapping;
+mod process;
 pub mod render;
 pub mod report;
 pub mod workspace;
@@ -80,10 +81,10 @@ pub fn report(opts: &Options) -> Result<Report> {
     let affected = affected::affected_crates(global, changed.iter().cloned(), &workspace.graph);
     // The tree walks from the roots down to their Dependents; with `changed_only` there
     // is nothing to walk to, and only members are ever shown below a root.
-    let dependents = if opts.changed_only {
+    let shown_dependents = if opts.changed_only {
         BTreeMap::new()
     } else {
-        affected::dependents(&affected, &workspace.graph, |name| {
+        affected::shown_dependents(&affected, &workspace.graph, |name| {
             workspace.is_member(name)
         })
     };
@@ -110,7 +111,7 @@ pub fn report(opts: &Options) -> Result<Report> {
         global_files,
         affected: members,
         changed_non_members,
-        dependents,
+        shown_dependents,
         file_outcomes: mapping.outcomes,
     })
 }
