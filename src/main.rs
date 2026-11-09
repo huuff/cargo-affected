@@ -8,9 +8,9 @@ use cli::Cli;
 fn main() -> ExitCode {
     let opts = Options::from(Cli::parse_from_env());
     match affected_crates(&opts) {
-        Ok(names) => {
-            for name in names {
-                println!("{name}");
+        Ok(crates) => {
+            for c in crates {
+                println!("{}", c.name);
             }
             ExitCode::SUCCESS
         }

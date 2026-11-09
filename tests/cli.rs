@@ -317,3 +317,71 @@ fn changed_only_leaves_out_crates_affected_as_dependents() {
     fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
     assert_eq!(lines(&fx.run(&["--changed-only"])), ["core"]);
 }
+
+#[test]
+fn editing_the_lockfile_prints_every_member() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    let lockfile = fx.root.join("Cargo.lock");
+    let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
+    fx.write("Cargo.lock", &edited);
+    fx.commit("touch lockfile");
+    // `cargo metadata` may rewrite a hand-edited lockfile, so compare committed states.
+    assert_eq!(
+        lines(&fx.run(&["--base", "main", "--to", "HEAD"])),
+        ["a", "b"]
+    );
+}
+
+#[test]
+fn editing_a_file_under_dot_cargo_prints_every_member() {
+    let fx = Fixture::new("basic", "");
+    fx.write(".cargo/config.toml", "[build]\n");
+    assert_eq!(lines(&fx.run(&[])), ["a", "b"]);
+}
+
+#[test]
+fn a_user_global_glob_prints_every_member_and_built_ins_still_apply() {
+    let fx = Fixture::new("globals", "");
+    fx.write("ci/test.sh", "#!/bin/sh\necho edited\n");
+    assert_eq!(lines(&fx.run(&[])), ["a", "root"]);
+
+    let fx = Fixture::new("globals", "");
+    fx.write(".cargo/config.toml", "[build]\n");
+    assert_eq!(lines(&fx.run(&[])), ["a", "root"]);
+}
+
+#[test]
+fn editing_only_the_workspace_manifest_is_global_for_every_member_including_the_root_package() {
+    use cargo_affected::{Options, Reason, affected_crates};
+
+    let fx = Fixture::new("globals", "");
+    let manifest = fx.root.join("Cargo.toml");
+    let edited = fs::read_to_string(&manifest).unwrap() + "\n# touched\n";
+    fx.write("Cargo.toml", &edited);
+
+    let opts = Options {
+        base: Some("main".into()),
+        manifest_path: Some(manifest),
+        ..Options::default()
+    };
+    let got: Vec<(String, Reason)> = affected_crates(&opts)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.name, c.reason))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("a".to_string(), Reason::Global),
+            ("root".to_string(), Reason::Global)
+        ]
+    );
+}
+
+#[test]
+fn changed_only_still_prints_every_member_when_a_global_file_changed() {
+    let fx = Fixture::new("basic", "");
+    fx.write(".cargo/config.toml", "[build]\n");
+    assert_eq!(lines(&fx.run(&["--changed-only"])), ["a", "b"]);
+}

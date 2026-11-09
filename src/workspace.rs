@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use cargo_metadata::MetadataCommand;
+use anyhow::{Context, Result, anyhow};
+use cargo_metadata::{Metadata, MetadataCommand};
 
 use crate::graph::DependencyGraph;
 use crate::mapping::CrateDir;
@@ -16,6 +16,8 @@ pub struct Workspace {
     pub packages: Vec<Package>,
     /// Dependencies between the packages, by name.
     pub graph: DependencyGraph,
+    /// User globs from `[workspace.metadata.affected].global`, relative to the root.
+    pub global_globs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,10 +84,13 @@ impl Workspace {
             }
         }
 
+        let global_globs = global_globs(&metadata)?;
+
         Ok(Self {
             root,
             packages,
             graph,
+            global_globs,
         })
     }
 
@@ -105,6 +110,33 @@ impl Workspace {
     pub fn is_member(&self, name: &str) -> bool {
         self.packages.iter().any(|p| p.member && p.name == name)
     }
+
+    /// Names of the workspace members.
+    pub fn member_names(&self) -> Vec<String> {
+        self.packages
+            .iter()
+            .filter(|p| p.member)
+            .map(|p| p.name.clone())
+            .collect()
+    }
+}
+
+/// The `global` list under `[workspace.metadata.affected]`, if any.
+fn global_globs(metadata: &Metadata) -> Result<Vec<String>> {
+    let Some(globs) = metadata.workspace_metadata.pointer("/affected/global") else {
+        return Ok(Vec::new());
+    };
+    globs
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .map(|item| item.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| {
+            anyhow!("`[workspace.metadata.affected].global` must be an array of strings")
+        })
 }
 
 fn canonical_dir(dir: &Path, name: &str) -> Result<PathBuf> {
