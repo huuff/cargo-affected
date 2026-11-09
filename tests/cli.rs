@@ -353,7 +353,7 @@ fn a_user_global_glob_prints_every_member_and_built_ins_still_apply() {
 
 #[test]
 fn editing_only_the_workspace_manifest_is_global_for_every_member_including_the_root_package() {
-    use cargo_affected::{Options, Reason, affected_crates};
+    use cargo_affected::{Options, Reason, report};
 
     let fx = Fixture::new("globals", "");
     let manifest = fx.root.join("Cargo.toml");
@@ -365,8 +365,9 @@ fn editing_only_the_workspace_manifest_is_global_for_every_member_including_the_
         manifest_path: Some(manifest),
         ..Options::default()
     };
-    let got: Vec<(String, Reason)> = affected_crates(&opts)
+    let got: Vec<(String, Reason)> = report(&opts)
         .unwrap()
+        .affected
         .into_iter()
         .map(|c| (c.name, c.reason))
         .collect();
@@ -430,4 +431,184 @@ fn malformed_package_metadata_is_an_error_naming_the_crate_and_the_setting() {
     assert!(stderr.contains("extra-paths"), "{stderr}");
     assert!(stderr.contains("array of strings"), "{stderr}");
     assert_eq!(out.stdout, b"");
+}
+
+/// Parses the JSON document a run printed, failing on anything a strict parser rejects.
+fn json(out: &Output) -> serde_json::Value {
+    let text = stdout(out);
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{text}"))
+}
+
+/// The entry of the `affected` array for `name`.
+fn affected<'a>(doc: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    doc["affected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == name)
+        .unwrap_or_else(|| panic!("no `{name}` in {doc:#}"))
+}
+
+fn affected_names(doc: &serde_json::Value) -> Vec<&str> {
+    doc["affected"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn json_lists_the_changed_crate_with_its_file_and_each_dependent_with_its_via() {
+    use serde_json::json;
+
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    let doc = json(&fx.run(&["--format", "json"]));
+
+    let core = affected(&doc, "core");
+    assert_eq!(core["reason"], "changed");
+    assert_eq!(core["changed_files"], json!(["crates/core/src/lib.rs"]));
+    assert_eq!(core["via"], json!([]));
+    assert_eq!(
+        core["manifest_path"],
+        json!(fx.root.join("crates/core/Cargo.toml"))
+    );
+
+    let mid = affected(&doc, "mid");
+    assert_eq!(mid["reason"], "dependent");
+    assert_eq!(mid["changed_files"], json!([]));
+    assert_eq!(mid["via"], json!(["core"]));
+
+    let app = affected(&doc, "app");
+    assert_eq!(app["reason"], "dependent");
+    assert_eq!(app["via"], json!(["mid"]));
+    assert_eq!(doc["global_files"], json!([]));
+}
+
+#[test]
+fn json_via_of_a_diamond_lists_both_changed_sides_sorted() {
+    use serde_json::json;
+
+    let fx = Fixture::new("graph", "");
+    fx.write(
+        "crates/right/src/lib.rs",
+        "pub fn right() { /* edited */ }\n",
+    );
+    fx.write("crates/left/src/lib.rs", "pub fn left() { /* edited */ }\n");
+    let doc = json(&fx.run(&["--format", "json"]));
+
+    assert_eq!(affected_names(&doc), ["left", "right", "top"]);
+    assert_eq!(affected(&doc, "left")["reason"], "changed");
+    assert_eq!(affected(&doc, "right")["reason"], "changed");
+    let top = affected(&doc, "top");
+    assert_eq!(top["reason"], "dependent");
+    assert_eq!(top["via"], json!(["left", "right"]));
+}
+
+#[test]
+fn json_lists_the_lockfile_as_a_global_file_and_every_member_as_global_without_via() {
+    use serde_json::json;
+
+    let fx = Fixture::new("basic", "");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    let lockfile = fx.root.join("Cargo.lock");
+    let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
+    fx.write("Cargo.lock", &edited);
+    fx.commit("touch lockfile");
+    let doc = json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
+
+    assert_eq!(doc["global_files"], json!(["Cargo.lock"]));
+    assert_eq!(affected_names(&doc), ["a", "b"]);
+    for name in ["a", "b"] {
+        let c = affected(&doc, name);
+        assert_eq!(c["reason"], "global", "{name}");
+        assert_eq!(c["via"], json!([]), "{name}");
+        assert_eq!(c["changed_files"], json!([]), "{name}");
+    }
+}
+
+#[test]
+fn json_to_is_worktree_by_default_and_a_commit_hash_with_to_head() {
+    let fx = Fixture::new("basic", "");
+    fx.git(&["checkout", "-q", "-b", "feature"]);
+    fx.write("crates/b/src/lib.rs", "pub fn b() { /* edited */ }\n");
+    fx.commit("edit b");
+    let main = fx.git(&["rev-parse", "main"]);
+    let head = fx.git(&["rev-parse", "HEAD"]);
+
+    let doc = json(&fx.run(&["--format", "json", "--base", "main"]));
+    assert_eq!(doc["base"], main);
+    assert_eq!(doc["to"], "worktree");
+
+    let doc = json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
+    assert_eq!(doc["base"], main);
+    assert_eq!(doc["to"], head);
+    assert_eq!(affected_names(&doc), ["b"]);
+}
+
+#[test]
+fn json_of_an_empty_change_set_has_an_empty_affected_array_and_exits_zero() {
+    use serde_json::json;
+
+    let fx = Fixture::new("basic", "");
+    let out = fx.run(&["--format", "json"]);
+    assert_eq!(out.status.code(), Some(0));
+    let doc = json(&out);
+    assert_eq!(doc["affected"], json!([]));
+    assert_eq!(doc["global_files"], json!([]));
+}
+
+#[test]
+fn json_is_identical_across_runs_with_the_affected_array_sorted_by_name() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    let first = stdout(&fx.run(&["--format", "json"]));
+    let second = stdout(&fx.run(&["--format", "json"]));
+    assert_eq!(first, second);
+
+    let doc: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(
+        affected_names(&doc),
+        [
+            "app",
+            "build-user",
+            "core",
+            "dev-user",
+            "mid",
+            "opt-user",
+            "target-user"
+        ]
+    );
+    assert_eq!(doc.as_object().unwrap().len(), 4, "{doc:#}");
+    assert_eq!(
+        affected(&doc, "core")
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        ["changed_files", "manifest_path", "name", "reason", "via"]
+    );
+}
+
+#[test]
+fn json_changed_only_leaves_out_dependents() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    let doc = json(&fx.run(&["--format", "json", "--changed-only"]));
+    assert_eq!(affected_names(&doc), ["core"]);
+}
+
+#[test]
+fn json_never_lists_a_non_member_but_names_it_in_via() {
+    use serde_json::json;
+
+    let fx = Fixture::new("graph", "");
+    fx.write("vendor/foo/src/lib.rs", "pub fn foo() { /* edited */ }\n");
+    let doc = json(&fx.run(&["--format", "json"]));
+    assert_eq!(affected_names(&doc), ["uses-foo"]);
+    let c = affected(&doc, "uses-foo");
+    assert_eq!(c["reason"], "dependent");
+    assert_eq!(c["via"], json!(["foo"]));
+    assert_eq!(c["changed_files"], json!([]));
 }

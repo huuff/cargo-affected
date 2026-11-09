@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use cargo_affected::Options;
 use cargo_affected::git::DEFAULT_BASE_BRANCHES;
-use clap::Parser;
+use cargo_affected::render;
+use clap::{Parser, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[command(name = "cargo-affected", bin_name = "cargo affected", version, about)]
@@ -30,6 +31,30 @@ pub struct Cli {
     /// Print only the Changed Crates, leaving out crates affected merely as Dependents.
     #[arg(long)]
     pub changed_only: bool,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t)]
+    pub format: Format,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum Format {
+    /// One crate name per line.
+    #[default]
+    List,
+    /// One JSON document with the Base, the inspected state, the Global Files and, per
+    /// crate, its manifest path, reason, changed files and the dependencies it is
+    /// affected through.
+    Json,
+}
+
+impl From<Format> for render::Format {
+    fn from(format: Format) -> Self {
+        match format {
+            Format::List => Self::List,
+            Format::Json => Self::Json,
+        }
+    }
 }
 
 impl Cli {
@@ -86,6 +111,16 @@ mod tests {
     fn direct_invocation_is_left_alone() {
         let got = without_cargo_subcommand(os_args(&["cargo-affected", "--to", "HEAD"]));
         assert_eq!(got, os_args(&["cargo-affected", "--to", "HEAD"]));
+    }
+
+    #[test]
+    fn format_defaults_to_list_and_accepts_json() {
+        let cli = Cli::try_parse_from(["cargo-affected"]).unwrap();
+        assert_eq!(cli.format, Format::List);
+        let cli = Cli::try_parse_from(["cargo-affected", "--format", "json"]).unwrap();
+        assert_eq!(cli.format, Format::Json);
+        let err = Cli::try_parse_from(["cargo-affected", "--format", "yaml"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
     }
 
     #[test]

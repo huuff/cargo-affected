@@ -3,11 +3,14 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
+
 use crate::graph::DependencyGraph;
 
 /// Why a crate is an Affected Crate. Variants are declared in ascending precedence, so
 /// the greatest applicable reason is the one reported: `global` > `changed` > `dependent`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Reason {
     /// The crate is a Dependent of a Changed Crate.
     Dependent,
@@ -47,6 +50,25 @@ pub fn affected_crates(
         }
     }
     affected
+}
+
+/// The direct dependencies of `name` through which affectedness arrived: those that are
+/// Affected Crates themselves, sorted by name. Empty unless `name` is affected as a
+/// Dependent, since a Changed Crate or a crate affected by a Global File needs no
+/// dependency to explain it.
+pub fn via(
+    name: &str,
+    affected: &BTreeMap<String, Reason>,
+    graph: &DependencyGraph,
+) -> Vec<String> {
+    if affected.get(name) != Some(&Reason::Dependent) {
+        return Vec::new();
+    }
+    graph
+        .dependencies(name)
+        .filter(|dependency| affected.contains_key(*dependency))
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -116,6 +138,41 @@ mod tests {
                 ("lonely".to_string(), Reason::Global)
             ]
         );
+    }
+
+    #[test]
+    fn via_names_the_affected_direct_dependencies_of_a_dependent_only() {
+        // `app` depends on `mid` and on `util`; only `mid` leads back to the Changed Crate.
+        let g = graph(&[("app", "mid"), ("app", "util"), ("mid", "core")]);
+        let affected = affected_crates([], strings(&["core"]), &g);
+        assert_eq!(via("app", &affected, &g), ["mid"]);
+        assert_eq!(via("mid", &affected, &g), ["core"]);
+        assert!(via("core", &affected, &g).is_empty());
+        assert!(via("util", &affected, &g).is_empty());
+    }
+
+    #[test]
+    fn via_of_a_diamond_lists_both_sides_sorted_and_is_empty_for_a_changed_crate() {
+        let g = graph(&[
+            ("top", "right"),
+            ("top", "left"),
+            ("left", "base"),
+            ("right", "base"),
+        ]);
+        let affected = affected_crates([], strings(&["left", "right"]), &g);
+        assert_eq!(via("top", &affected, &g), ["left", "right"]);
+        assert!(via("left", &affected, &g).is_empty());
+
+        // A Changed Crate whose dependencies are affected too explains itself.
+        let affected = affected_crates([], strings(&["base", "top"]), &g);
+        assert!(via("top", &affected, &g).is_empty());
+    }
+
+    #[test]
+    fn via_is_empty_when_a_global_file_made_the_crate_affected() {
+        let g = graph(&[("app", "core")]);
+        let affected = affected_crates(strings(&["app", "core"]), strings(&["core"]), &g);
+        assert!(via("app", &affected, &g).is_empty());
     }
 
     #[test]

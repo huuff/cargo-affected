@@ -93,7 +93,8 @@ impl Repo {
         Ok(ChangeSet { files })
     }
 
-    fn rev_parse(&self, rev: &str) -> Result<String> {
+    /// Resolves `rev` to a commit hash.
+    pub fn rev_parse(&self, rev: &str) -> Result<String> {
         let out = self
             .git(&[
                 "rev-parse",

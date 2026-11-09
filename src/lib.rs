@@ -11,14 +11,17 @@ pub mod affected;
 pub mod git;
 pub mod graph;
 pub mod mapping;
+pub mod render;
+pub mod report;
 pub mod workspace;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 pub use affected::Reason;
 use git::{Base, Repo};
+pub use report::{AffectedCrate, Report, To};
 use workspace::Workspace;
 
 /// What to compute the Change Set over, and how to report the result.
@@ -35,24 +38,22 @@ pub struct Options {
     pub changed_only: bool,
 }
 
-/// A workspace member that is an Affected Crate, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AffectedCrate {
-    pub name: String,
-    pub reason: Reason,
-}
-
-/// The Affected Crates that are workspace members, sorted by name. With `changed_only`,
-/// the crates affected merely as Dependents are left out.
-pub fn affected_crates(opts: &Options) -> Result<Vec<AffectedCrate>> {
+/// Computes the Change Set between the Base and the inspected state and reports the
+/// Affected Crates that are workspace members, sorted by name. With `changed_only`, the
+/// crates affected merely as Dependents are left out.
+pub fn report(opts: &Options) -> Result<Report> {
     let workspace = Workspace::load(opts.manifest_path.as_deref())?;
     let repo = Repo::discover(&workspace.root)?;
     let base = match &opts.from {
         Some(rev) => Base::Exact(rev.clone()),
         None => Base::MergeBase(opts.base.clone()),
     };
-    let from = repo.resolve_base(&base)?;
-    let change_set = repo.change_set(&from, opts.to.as_deref())?;
+    let base = repo.resolve_base(&base)?;
+    let to = match &opts.to {
+        Some(rev) => To::Commit(repo.rev_parse(rev)?),
+        None => To::Worktree,
+    };
+    let change_set = repo.change_set(&base, to.commit())?;
 
     let workspace_in_repo = workspace
         .root
@@ -64,16 +65,33 @@ pub fn affected_crates(opts: &Options) -> Result<Vec<AffectedCrate>> {
 
     // A Global File makes every member affected; the mapping has already kept such
     // files away from the crates, so a root package is not Changed by them.
-    let global = if mapping.global_files().is_empty() {
+    let global_files = mapping.global_files();
+    let global = if global_files.is_empty() {
         Vec::new()
     } else {
         workspace.member_names()
     };
     let affected = affected::affected_crates(global, mapping.changed(), &workspace.graph);
-    Ok(affected
-        .into_iter()
-        .filter(|(name, _)| workspace.is_member(name))
-        .filter(|(_, reason)| !(opts.changed_only && *reason == Reason::Dependent))
-        .map(|(name, reason)| AffectedCrate { name, reason })
-        .collect())
+    let members = affected
+        .iter()
+        .filter(|(_, reason)| !(opts.changed_only && **reason == Reason::Dependent))
+        .filter_map(|(name, reason)| workspace.member(name).map(|pkg| (pkg, *reason)))
+        .map(|(pkg, reason)| AffectedCrate {
+            name: pkg.name.clone(),
+            manifest_path: pkg.dir.join("Cargo.toml"),
+            reason,
+            changed_files: owned(mapping.changed_files(&pkg.name)),
+            via: affected::via(&pkg.name, &affected, &workspace.graph),
+        })
+        .collect();
+    Ok(Report {
+        base,
+        to,
+        global_files: owned(global_files),
+        affected: members,
+    })
+}
+
+fn owned(paths: Vec<&Path>) -> Vec<PathBuf> {
+    paths.into_iter().map(Path::to_path_buf).collect()
 }

@@ -124,8 +124,9 @@ impl Workspace {
             .collect()
     }
 
-    pub fn is_member(&self, name: &str) -> bool {
-        self.packages.iter().any(|p| p.member && p.name == name)
+    /// The workspace member called `name`, if there is one.
+    pub fn member(&self, name: &str) -> Option<&Package> {
+        self.packages.iter().find(|p| p.member && p.name == name)
     }
 
     /// Names of the workspace members.

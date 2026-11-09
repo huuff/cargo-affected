@@ -219,6 +219,22 @@ impl Mapping {
             .collect()
     }
 
+    /// The files that made `crate_name` a Changed Crate, sorted and deduplicated: those
+    /// inside its directory that it does not ignore, and those matching its Extra Paths.
+    pub fn changed_files(&self, crate_name: &str) -> Vec<&Path> {
+        let mut files: Vec<&Path> = self
+            .outcomes
+            .iter()
+            .filter(|o| match &o.outcome {
+                Outcome::ExtraPath(name) | Outcome::CrateDirectory(name) => name == crate_name,
+                Outcome::GlobalFile | Outcome::Ignored(_) | Outcome::Unmapped => false,
+            })
+            .map(|o| o.file.as_path())
+            .collect();
+        files.dedup();
+        files
+    }
+
     /// Names of the Changed Crates.
     pub fn changed(&self) -> BTreeSet<String> {
         self.outcomes
@@ -595,6 +611,37 @@ mod tests {
         assert!(msg.contains("`lib`"), "{msg}");
         assert!(msg.contains("[package.metadata.affected].ignore"), "{msg}");
         assert!(msg.contains("docs/["), "{msg}");
+    }
+
+    #[test]
+    fn changed_files_of_a_crate_are_its_own_and_extra_path_files_listed_once_each() {
+        let crates = [
+            CrateDir::new("a", "crates/a")
+                .extra_paths(&["assets/**".to_string(), "../shared/*.json".to_string()])
+                .unwrap()
+                .ignore(&["README.md".to_string()])
+                .unwrap(),
+            CrateDir::new("b", "crates/b"),
+        ];
+        let files = [
+            "crates/a/assets/logo.png",
+            "crates/a/src/lib.rs",
+            "crates/a/README.md",
+            "crates/shared/config.json",
+            "crates/b/src/lib.rs",
+            "Cargo.lock",
+        ];
+        let got = map_files(&crates, &GlobalFiles::new(&[]).unwrap(), paths(&files));
+        assert_eq!(
+            got.changed_files("a"),
+            [
+                Path::new("crates/a/assets/logo.png"),
+                Path::new("crates/a/src/lib.rs"),
+                Path::new("crates/shared/config.json"),
+            ]
+        );
+        assert_eq!(got.changed_files("b"), [Path::new("crates/b/src/lib.rs")]);
+        assert!(got.changed_files("c").is_empty());
     }
 
     #[test]

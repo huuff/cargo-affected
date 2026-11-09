@@ -9,6 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct DependencyGraph {
     /// Dependency name -> names of the crates that depend on it directly.
     dependents: BTreeMap<String, BTreeSet<String>>,
+    /// Dependent name -> names of the crates it depends on directly.
+    dependencies: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl DependencyGraph {
@@ -18,6 +20,19 @@ impl DependencyGraph {
             .entry(dependency.to_string())
             .or_default()
             .insert(dependent.to_string());
+        self.dependencies
+            .entry(dependent.to_string())
+            .or_default()
+            .insert(dependency.to_string());
+    }
+
+    /// The crates `dependent` depends on directly, sorted by name.
+    pub fn dependencies<'a>(&'a self, dependent: &str) -> impl Iterator<Item = &'a str> + 'a {
+        self.dependencies
+            .get(dependent)
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
     }
 
     /// The Changed Crates plus every transitive Dependent of one.
@@ -117,6 +132,14 @@ mod tests {
     fn a_changed_crate_unknown_to_the_graph_is_still_affected() {
         let g = graph(&[("app", "core")]);
         assert_eq!(names(g.with_dependents(["lonely".to_string()])), ["lonely"]);
+    }
+
+    #[test]
+    fn direct_dependencies_are_listed_sorted_and_transitive_ones_are_not() {
+        let g = graph(&[("top", "right"), ("top", "left"), ("left", "base")]);
+        assert_eq!(g.dependencies("top").collect::<Vec<_>>(), ["left", "right"]);
+        assert_eq!(g.dependencies("base").count(), 0);
+        assert_eq!(g.dependencies("unknown").count(), 0);
     }
 
     #[test]
