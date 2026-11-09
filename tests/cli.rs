@@ -78,17 +78,13 @@ impl Fixture {
 
     /// Runs `cargo-affected` directly, in the workspace directory.
     fn run(&self, args: &[&str]) -> Output {
-        self.run_in(&self.workspace, args)
-    }
-
-    /// Runs `cargo-affected` directly, in `cwd`.
-    fn run_in(&self, cwd: &Path, args: &[&str]) -> Output {
-        run_binary(cwd, args)
+        run_binary(&self.workspace, args)
     }
 
     /// Clones the repository with `--depth 1`, every branch, into its own temp dir, so
-    /// the branches share no history there, as in a CI checkout.
-    fn shallow_clone(&self) -> (TempDir, PathBuf) {
+    /// the branches share no history there, as in a CI checkout. The `file://` URL is
+    /// what makes git honour `--depth`; a plain path clone ignores it.
+    fn shallow_clone(&self) -> Self {
         let dir = TempDir::new().unwrap();
         let clone = dir.path().canonicalize().unwrap().join("clone");
         let url = format!("file://{}", self.root.display());
@@ -102,7 +98,11 @@ impl Fixture {
             "git clone failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
-        (dir, clone)
+        Self {
+            _dir: dir,
+            workspace: clone.join(self.workspace.strip_prefix(&self.root).unwrap()),
+            root: clone,
+        }
     }
 
     /// Runs `cargo affected`, letting Cargo dispatch to the binary found on `PATH`.
@@ -254,7 +254,7 @@ fn manifest_path_selects_the_workspace_from_elsewhere() {
     let fx = Fixture::new("basic", "ws");
     fx.write("ws/crates/b/src/lib.rs", "pub fn b() { /* edited */ }\n");
     let manifest = fx.workspace.join("Cargo.toml");
-    let out = fx.run_in(&fx.root, &["--manifest-path", manifest.to_str().unwrap()]);
+    let out = run_binary(&fx.root, &["--manifest-path", manifest.to_str().unwrap()]);
     assert_eq!(lines(&out), ["b"]);
 }
 
@@ -771,7 +771,7 @@ fn a_successful_run_without_verbose_writes_nothing_to_stderr() {
 }
 
 #[test]
-fn verbose_lists_every_changed_file_with_its_mapping_outcome_on_stderr() {
+fn verbose_lists_every_file_of_the_change_set_with_its_mapping_outcome_on_stderr() {
     let fx = Fixture::new("extra-paths", "");
     fx.write(".cargo/config.toml", "[build]\n");
     fx.write("LICENSE", "MIT\n");
@@ -808,9 +808,9 @@ fn a_shallow_clone_without_a_merge_base_is_an_error_suggesting_to_fetch_more_his
     fx.git(&["checkout", "-q", "-b", "feature"]);
     fx.write("crates/a/src/lib.rs", "pub fn a() { /* on branch */ }\n");
     fx.commit("touch a");
-    let (_dir, clone) = fx.shallow_clone();
+    let clone = fx.shallow_clone();
 
-    let msg = error_of(&fx.run_in(&clone, &["--to", "HEAD"]));
+    let msg = error_of(&clone.run(&["--to", "HEAD"]));
     assert!(msg.contains("no merge-base"), "{msg}");
     assert!(msg.contains("`origin/main`"), "{msg}");
     assert!(msg.contains("fetch more history"), "{msg}");

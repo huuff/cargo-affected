@@ -33,7 +33,7 @@ pub struct Report {
     /// Where each file of the Change Set under the workspace root landed, sorted by file;
     /// what `-v` explains on stderr. Never serialised: it is a diagnostic, not a result.
     #[serde(skip)]
-    pub files: Vec<FileOutcome>,
+    pub file_outcomes: Vec<FileOutcome>,
 }
 
 /// The inspected end of the Change Set: a commit, or the working tree.

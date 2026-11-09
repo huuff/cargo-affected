@@ -40,16 +40,19 @@ impl ChangeSet {
 }
 
 impl Repo {
-    /// Finds the repository containing `dir`.
+    /// Finds the repository containing `dir`. Git's own "not a git repository" gets a
+    /// message naming the directory; any other failure (permissions, `safe.directory`)
+    /// is reported in git's words.
     pub fn discover(dir: &Path) -> Result<Self> {
-        let out = git_output(dir, &["rev-parse", "--show-toplevel"])?;
-        if !out.status.success() {
+        let args = ["rev-parse", "--show-toplevel"];
+        let out = git_output(dir, &args)?;
+        if !out.status.success() && stderr_of(&out).contains("not a git repository") {
             bail!(
-                "{} is not inside a git repository; run `cargo affected` from a checkout or pass `--manifest-path`",
+                "{} is not inside a git repository; run `cargo affected` inside a checkout of the workspace",
                 dir.display()
             );
         }
-        let root = PathBuf::from(stdout(out)?.trim_end())
+        let root = PathBuf::from(checked(&args, out)?.trim_end())
             .canonicalize()
             .context("canonicalising the git root")?;
         Ok(Self { root })
@@ -117,16 +120,17 @@ impl Repo {
 
     /// The merge-base of `branch` and HEAD. Git exits 1 without a word when the two share
     /// no history, which in CI almost always means a shallow clone, so that case gets its
-    /// own message instead of a bare `git merge-base failed`.
+    /// own message; any other failure is reported in git's words.
     fn merge_base(&self, branch: &str) -> Result<String> {
         self.rev_parse(branch)?;
-        let out = git_output(&self.root, &["merge-base", branch, "HEAD"])?;
-        if !out.status.success() {
+        let args = ["merge-base", branch, "HEAD"];
+        let out = git_output(&self.root, &args)?;
+        if out.status.code() == Some(1) && out.stderr.is_empty() {
             bail!(
                 "no merge-base between `{branch}` and HEAD: the clone is shallow or the histories are unrelated; fetch more history (e.g. `git fetch --unshallow`, or `git fetch --deepen=<n>`) or pass another base with `--base <ref>`"
             );
         }
-        Ok(stdout(out)?.trim_end().to_string())
+        Ok(checked(&args, out)?.trim_end().to_string())
     }
 
     fn git(&self, args: &[&str]) -> Result<String> {
@@ -152,15 +156,7 @@ fn parse_name_status(out: &str) -> Vec<PathBuf> {
 
 /// Runs git and returns its stdout, failing with git's own words on a non-zero exit.
 fn run_git(cwd: &Path, args: &[&str]) -> Result<String> {
-    let out = git_output(cwd, args)?;
-    if !out.status.success() {
-        bail!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    stdout(out)
+    checked(args, git_output(cwd, args)?)
 }
 
 /// Runs git and returns whatever it did, so the caller can read a non-zero exit itself.
@@ -173,8 +169,16 @@ fn git_output(cwd: &Path, args: &[&str]) -> Result<Output> {
         .context("running git")
 }
 
-fn stdout(out: Output) -> Result<String> {
+/// The stdout of a finished `git <args>`, or an error in git's own words.
+fn checked(args: &[&str], out: Output) -> Result<String> {
+    if !out.status.success() {
+        bail!("git {} failed: {}", args.join(" "), stderr_of(&out));
+    }
     String::from_utf8(out.stdout).context("git output is not UTF-8")
+}
+
+fn stderr_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).trim().to_string()
 }
 
 #[cfg(test)]

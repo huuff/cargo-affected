@@ -65,7 +65,7 @@ pub fn report(opts: &Options) -> Result<Report> {
         .context("the workspace root is not inside the git repository")?;
     let files = change_set.files_under(workspace_in_repo);
     let globals = mapping::GlobalFiles::new(&workspace.global_globs)?;
-    let mut mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
+    let mapping = mapping::map_files(&workspace.crate_dirs()?, &globals, files);
 
     // A Global File makes every member affected; the mapping has already kept such
     // files away from the crates, so a root package is not Changed by them.
@@ -110,6 +110,6 @@ pub fn report(opts: &Options) -> Result<Report> {
         affected: members,
         changed_non_members,
         dependents,
-        files: std::mem::take(&mut mapping.outcomes),
+        file_outcomes: mapping.outcomes,
     })
 }

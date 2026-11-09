@@ -75,7 +75,11 @@ pub fn render(report: &Report, format: Format) -> Result<String> {
 /// The `-v` diagnostics: one line per file of the Change Set saying where it landed, in
 /// the report's order; ends with a newline unless empty.
 pub fn diagnostics(report: &Report) -> String {
-    report.files.iter().map(|f| format!("{f}\n")).collect()
+    report
+        .file_outcomes
+        .iter()
+        .map(|f| format!("{f}\n"))
+        .collect()
 }
 
 fn list(report: &Report) -> String {
@@ -245,7 +249,7 @@ mod tests {
             ],
             changed_non_members: Vec::new(),
             dependents: BTreeMap::new(),
-            files: vec![
+            file_outcomes: vec![
                 FileOutcome {
                     file: PathBuf::from("Cargo.lock"),
                     outcome: Outcome::GlobalFile,
@@ -265,7 +269,7 @@ mod tests {
             "Cargo.lock -> global file\ncrates/core/src/lib.rs -> core (crate directory)\n"
         );
         let none = Report {
-            files: Vec::new(),
+            file_outcomes: Vec::new(),
             ..report(To::Worktree)
         };
         assert_eq!(diagnostics(&none), "");
@@ -350,7 +354,7 @@ mod tests {
             ],
             changed_non_members: Vec::new(),
             dependents: edges(&[("core", &["mid"]), ("mid", &["app"])]),
-            files: Vec::new(),
+            file_outcomes: Vec::new(),
         }
     }
 
