@@ -1,5 +1,5 @@
 //! Integration tests: copy a fixture workspace to a temp dir, `git init` it, commit a
-//! baseline, apply changes and run the binary.
+//! baseline, edit files and run the binary.
 
 use std::collections::BTreeSet;
 use std::fs;

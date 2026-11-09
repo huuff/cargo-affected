@@ -52,7 +52,8 @@ pub enum Format {
     #[default]
     List,
     /// One JSON document: base and to commits, global files and, per crate, its manifest
-    /// path, reason, changed files and the dependencies it is affected through.
+    /// path, reason, the files that made it Changed and the dependencies it is affected
+    /// through.
     Json,
     /// Why each crate is affected: changed crates and global files as roots with their
     /// dependents beneath, `cargo tree` style; a crate shown earlier is marked `(*)`.

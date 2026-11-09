@@ -38,8 +38,12 @@ Evaluated in order for each file in the Change Set:
    matches that crate's `ignore` globs, it is not counted.
 4. Otherwise the file is unmapped and ignored. Listed on stderr under `-v`.
 
-Globs are gitignore-style (`globset`), relative to the workspace root for `global` and to
-the crate root for `extra-paths` and `ignore`. User globals extend the built-in set.
+Globs are gitignore-style (`globset`) and anchored at their root, whatever their shape:
+the workspace root for `global`, the crate directory for `extra-paths` and `ignore`. So
+`README.md` matches only at that root and not `src/README.md` (write `**/README.md` for
+any depth); `*` and `?` stay within one path component, and a leading `/` or `./` means
+the same as no prefix. Decided in [ADR 0002](../../docs/adr/0002-glob-anchoring.md).
+User globals extend the built-in set.
 
 ```toml
 [workspace.metadata.affected]

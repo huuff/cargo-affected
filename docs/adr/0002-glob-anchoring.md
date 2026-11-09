@@ -35,7 +35,7 @@ match at any depth, and `README.md` in a crate's `ignore` leaves
 
 - One rule for all three settings, explained in one sentence in the README.
 - Predictable: a pattern never matches more than it literally spells out, so
-  a short `ignore` glob cannot silently hide changes deeper in the crate.
+  a short `ignore` glob cannot silently hide files deeper in the crate.
 - Users porting a `.gitignore` line like `*.md` must add `**/` themselves.
 - Only files under the workspace root are ever mapped, so an Extra Path that
   escapes it could never match; rejecting it surfaces the mistake instead of

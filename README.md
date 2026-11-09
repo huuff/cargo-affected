@@ -296,7 +296,7 @@ directories, and a leading `/` or `./` is accepted and means the same as no pref
 So `*.toml` matches `deny.toml` but not `ci/deny.toml`; write `**/*.toml` to match at any
 depth, and `README.md` in a crate's `ignore` leaves `src/README.md` alone. A `.gitignore`
 line like `*.md` needs `**/` in front to keep its meaning here. A pattern never matches
-more than it literally spells out, so a short `ignore` glob cannot silently hide changes
+more than it literally spells out, so a short `ignore` glob cannot silently hide files
 deeper in the crate.
 
 ## Diagnostics

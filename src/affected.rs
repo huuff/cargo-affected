@@ -71,7 +71,7 @@ pub fn via(
         .collect()
 }
 
-/// For every Affected Crate, the nearest Affected Crates downstream of it that `is_shown`
+/// For every Affected Crate, the nearest affected Dependents of it that `is_shown`
 /// admits, sorted by name; crates with none are left out. These are its affected direct
 /// Dependents, except that a Dependent not shown (a non-member path crate) is looked
 /// through to its own Dependents, so a member reached only through such crates still
