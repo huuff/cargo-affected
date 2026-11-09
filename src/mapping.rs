@@ -210,26 +210,26 @@ pub struct Mapping {
 }
 
 impl Mapping {
-    /// The Global Files in the Change Set.
-    pub fn global_files(&self) -> Vec<&Path> {
+    /// The Global Files in the Change Set, sorted.
+    pub fn global_files(&self) -> Vec<PathBuf> {
         self.outcomes
             .iter()
             .filter(|o| o.outcome == Outcome::GlobalFile)
-            .map(|o| o.file.as_path())
+            .map(|o| o.file.clone())
             .collect()
     }
 
     /// The files that made `crate_name` a Changed Crate, sorted and deduplicated: those
     /// inside its directory that it does not ignore, and those matching its Extra Paths.
-    pub fn changed_files(&self, crate_name: &str) -> Vec<&Path> {
-        let mut files: Vec<&Path> = self
+    pub fn changed_files(&self, crate_name: &str) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = self
             .outcomes
             .iter()
             .filter(|o| match &o.outcome {
                 Outcome::ExtraPath(name) | Outcome::CrateDirectory(name) => name == crate_name,
                 Outcome::GlobalFile | Outcome::Ignored(_) | Outcome::Unmapped => false,
             })
-            .map(|o| o.file.as_path())
+            .map(|o| o.file.clone())
             .collect();
         files.dedup();
         files
@@ -635,12 +635,15 @@ mod tests {
         assert_eq!(
             got.changed_files("a"),
             [
-                Path::new("crates/a/assets/logo.png"),
-                Path::new("crates/a/src/lib.rs"),
-                Path::new("crates/shared/config.json"),
+                PathBuf::from("crates/a/assets/logo.png"),
+                PathBuf::from("crates/a/src/lib.rs"),
+                PathBuf::from("crates/shared/config.json"),
             ]
         );
-        assert_eq!(got.changed_files("b"), [Path::new("crates/b/src/lib.rs")]);
+        assert_eq!(
+            got.changed_files("b"),
+            [PathBuf::from("crates/b/src/lib.rs")]
+        );
         assert!(got.changed_files("c").is_empty());
     }
 

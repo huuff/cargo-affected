@@ -15,7 +15,7 @@ pub mod render;
 pub mod report;
 pub mod workspace;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
@@ -80,18 +80,14 @@ pub fn report(opts: &Options) -> Result<Report> {
             name: pkg.name.clone(),
             manifest_path: pkg.dir.join("Cargo.toml"),
             reason,
-            changed_files: owned(mapping.changed_files(&pkg.name)),
+            changed_files: mapping.changed_files(&pkg.name),
             via: affected::via(&pkg.name, &affected, &workspace.graph),
         })
         .collect();
     Ok(Report {
         base,
         to,
-        global_files: owned(global_files),
+        global_files,
         affected: members,
     })
-}
-
-fn owned(paths: Vec<&Path>) -> Vec<PathBuf> {
-    paths.into_iter().map(Path::to_path_buf).collect()
 }

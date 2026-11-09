@@ -4,12 +4,14 @@ use anyhow::{Context, Result};
 
 use crate::report::Report;
 
+/// An output format. The CLI mirrors this enum in `cli::Format`, which carries the help
+/// text, so the library stays free of clap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Format {
     /// One crate name per line.
     #[default]
     List,
-    /// One JSON document, see the spec's Output section.
+    /// One JSON document: the [`Report`] serialised field by field, pretty-printed.
     Json,
 }
 

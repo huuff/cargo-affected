@@ -23,7 +23,9 @@ pub struct Report {
 /// The inspected end of the Change Set: a commit, or the working tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum To {
+    /// The commit `--to` resolved to.
     Commit(String),
+    /// The working tree, including staged, unstaged and untracked files.
     Worktree,
 }
 
@@ -47,9 +49,11 @@ impl Serialize for To {
 /// A workspace member that is an Affected Crate, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AffectedCrate {
+    /// The package name.
     pub name: String,
-    /// Absolute path of the crate's `Cargo.toml`.
+    /// Absolute, canonical path of the crate's `Cargo.toml`.
     pub manifest_path: PathBuf,
+    /// The single reason of highest precedence, see [`Reason`].
     pub reason: Reason,
     /// The files of the Change Set that mapped to this crate, by its directory or an Extra
     /// Path, relative to the workspace root and sorted. Filled whatever the reason.

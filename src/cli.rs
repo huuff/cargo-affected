@@ -42,9 +42,8 @@ pub enum Format {
     /// One crate name per line.
     #[default]
     List,
-    /// One JSON document with the Base, the inspected state, the Global Files and, per
-    /// crate, its manifest path, reason, changed files and the dependencies it is
-    /// affected through.
+    /// One JSON document: base and to commits, global files and, per crate, its manifest
+    /// path, reason, changed files and the dependencies it is affected through.
     Json,
 }
 

@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use serde_json::json;
 use tempfile::TempDir;
 
 struct Fixture {
@@ -434,7 +435,7 @@ fn malformed_package_metadata_is_an_error_naming_the_crate_and_the_setting() {
 }
 
 /// Parses the JSON document a run printed, failing on anything a strict parser rejects.
-fn json(out: &Output) -> serde_json::Value {
+fn parse_json(out: &Output) -> serde_json::Value {
     let text = stdout(out);
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{text}"))
 }
@@ -460,11 +461,9 @@ fn affected_names(doc: &serde_json::Value) -> Vec<&str> {
 
 #[test]
 fn json_lists_the_changed_crate_with_its_file_and_each_dependent_with_its_via() {
-    use serde_json::json;
-
     let fx = Fixture::new("graph", "");
     fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
-    let doc = json(&fx.run(&["--format", "json"]));
+    let doc = parse_json(&fx.run(&["--format", "json"]));
 
     let core = affected(&doc, "core");
     assert_eq!(core["reason"], "changed");
@@ -488,15 +487,13 @@ fn json_lists_the_changed_crate_with_its_file_and_each_dependent_with_its_via() 
 
 #[test]
 fn json_via_of_a_diamond_lists_both_changed_sides_sorted() {
-    use serde_json::json;
-
     let fx = Fixture::new("graph", "");
     fx.write(
         "crates/right/src/lib.rs",
         "pub fn right() { /* edited */ }\n",
     );
     fx.write("crates/left/src/lib.rs", "pub fn left() { /* edited */ }\n");
-    let doc = json(&fx.run(&["--format", "json"]));
+    let doc = parse_json(&fx.run(&["--format", "json"]));
 
     assert_eq!(affected_names(&doc), ["left", "right", "top"]);
     assert_eq!(affected(&doc, "left")["reason"], "changed");
@@ -508,15 +505,13 @@ fn json_via_of_a_diamond_lists_both_changed_sides_sorted() {
 
 #[test]
 fn json_lists_the_lockfile_as_a_global_file_and_every_member_as_global_without_via() {
-    use serde_json::json;
-
     let fx = Fixture::new("basic", "");
     fx.git(&["checkout", "-q", "-b", "feature"]);
     let lockfile = fx.root.join("Cargo.lock");
     let edited = fs::read_to_string(&lockfile).unwrap() + "\n# touched\n";
     fx.write("Cargo.lock", &edited);
     fx.commit("touch lockfile");
-    let doc = json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
+    let doc = parse_json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
 
     assert_eq!(doc["global_files"], json!(["Cargo.lock"]));
     assert_eq!(affected_names(&doc), ["a", "b"]);
@@ -529,32 +524,39 @@ fn json_lists_the_lockfile_as_a_global_file_and_every_member_as_global_without_v
 }
 
 #[test]
-fn json_to_is_worktree_by_default_and_a_commit_hash_with_to_head() {
+fn json_base_is_the_merge_base_and_to_is_worktree_by_default_or_a_commit_with_to_head() {
     let fx = Fixture::new("basic", "");
+    let fork = fx.git(&["rev-parse", "HEAD"]);
     fx.git(&["checkout", "-q", "-b", "feature"]);
     fx.write("crates/b/src/lib.rs", "pub fn b() { /* edited */ }\n");
     fx.commit("edit b");
-    let main = fx.git(&["rev-parse", "main"]);
     let head = fx.git(&["rev-parse", "HEAD"]);
+    // `main` moves on after the fork, so the Base is the fork, not `main`'s tip.
+    fx.git(&["checkout", "-q", "main"]);
+    fx.write(
+        "crates/a/src/lib.rs",
+        "pub fn a() { /* edited on main */ }\n",
+    );
+    fx.commit("edit a on main");
+    fx.git(&["checkout", "-q", "feature"]);
+    assert_ne!(fx.git(&["rev-parse", "main"]), fork);
 
-    let doc = json(&fx.run(&["--format", "json", "--base", "main"]));
-    assert_eq!(doc["base"], main);
+    let doc = parse_json(&fx.run(&["--format", "json", "--base", "main"]));
+    assert_eq!(doc["base"], fork);
     assert_eq!(doc["to"], "worktree");
 
-    let doc = json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
-    assert_eq!(doc["base"], main);
+    let doc = parse_json(&fx.run(&["--format", "json", "--base", "main", "--to", "HEAD"]));
+    assert_eq!(doc["base"], fork);
     assert_eq!(doc["to"], head);
     assert_eq!(affected_names(&doc), ["b"]);
 }
 
 #[test]
 fn json_of_an_empty_change_set_has_an_empty_affected_array_and_exits_zero() {
-    use serde_json::json;
-
     let fx = Fixture::new("basic", "");
     let out = fx.run(&["--format", "json"]);
     assert_eq!(out.status.code(), Some(0));
-    let doc = json(&out);
+    let doc = parse_json(&out);
     assert_eq!(doc["affected"], json!([]));
     assert_eq!(doc["global_files"], json!([]));
 }
@@ -595,17 +597,15 @@ fn json_is_identical_across_runs_with_the_affected_array_sorted_by_name() {
 fn json_changed_only_leaves_out_dependents() {
     let fx = Fixture::new("graph", "");
     fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
-    let doc = json(&fx.run(&["--format", "json", "--changed-only"]));
+    let doc = parse_json(&fx.run(&["--format", "json", "--changed-only"]));
     assert_eq!(affected_names(&doc), ["core"]);
 }
 
 #[test]
 fn json_never_lists_a_non_member_but_names_it_in_via() {
-    use serde_json::json;
-
     let fx = Fixture::new("graph", "");
     fx.write("vendor/foo/src/lib.rs", "pub fn foo() { /* edited */ }\n");
-    let doc = json(&fx.run(&["--format", "json"]));
+    let doc = parse_json(&fx.run(&["--format", "json"]));
     assert_eq!(affected_names(&doc), ["uses-foo"]);
     let c = affected(&doc, "uses-foo");
     assert_eq!(c["reason"], "dependent");
