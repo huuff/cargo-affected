@@ -8,7 +8,7 @@ use cargo_metadata::MetadataCommand;
 use serde_json::Value;
 
 use crate::graph::DependencyGraph;
-use crate::mapping::CrateDir;
+use crate::mapping::{CrateDir, GlobalFiles, crate_setting};
 
 pub struct Workspace {
     /// Canonical path of the workspace root.
@@ -37,7 +37,7 @@ pub struct Package {
 pub struct CrateMetadata {
     /// Extra Paths: globs, possibly starting with `../`, that make the crate Changed.
     pub extra_paths: Vec<String>,
-    /// Globs for files inside the crate's directory that do not count as changes.
+    /// Globs for files inside the crate's directory that do not make it a Changed Crate.
     pub ignore: Vec<String>,
 }
 
@@ -98,7 +98,7 @@ impl Workspace {
         }
 
         let global_globs = string_list(&metadata.workspace_metadata, "global", || {
-            "`[workspace.metadata.affected].global`".to_string()
+            GlobalFiles::SETTING.to_string()
         })?;
 
         Ok(Self {
@@ -140,10 +140,11 @@ impl Workspace {
 
 /// The `[package.metadata.affected]` table of crate `name`, given the package metadata.
 fn crate_metadata(name: &str, metadata: &Value) -> Result<CrateMetadata> {
-    let origin = |key: &str| format!("`[package.metadata.affected].{key}` of crate `{name}`");
     Ok(CrateMetadata {
-        extra_paths: string_list(metadata, "extra-paths", || origin("extra-paths"))?,
-        ignore: string_list(metadata, "ignore", || origin("ignore"))?,
+        extra_paths: string_list(metadata, "extra-paths", || {
+            crate_setting(name, "extra-paths")
+        })?,
+        ignore: string_list(metadata, "ignore", || crate_setting(name, "ignore"))?,
     })
 }
 

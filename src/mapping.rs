@@ -9,7 +9,11 @@
 //! Files, the crate directory for `extra-paths` and `ignore`. `*` and `?` stay within one
 //! path component, `**` spans directories, and a leading `/` or `./` means the same as no
 //! prefix. `*.toml` therefore matches `deny.toml` but not `ci/deny.toml`; write
-//! `**/*.toml` to match at any depth.
+//! `**/*.toml` to match at any depth. See ADR 0002.
+//!
+//! An `extra-paths` glob may point inside a crate directory, the crate's own included; it
+//! then claims the file regardless of that crate's `ignore` globs, which only decide
+//! whether the file counts for the crate whose directory contains it.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -28,7 +32,7 @@ impl Globs {
     pub fn new<'a>(patterns: impl IntoIterator<Item = &'a str>, origin: &str) -> Result<Self> {
         let mut builder = GlobSetBuilder::new();
         for pattern in patterns {
-            let glob = GlobBuilder::new(anchored(pattern))
+            let glob = GlobBuilder::new(without_anchor(pattern))
                 .literal_separator(true)
                 .build()
                 .with_context(|| format!("invalid glob `{pattern}` in {origin}"))?;
@@ -45,8 +49,9 @@ impl Globs {
     }
 }
 
-/// A leading `/` or `./` anchors a gitignore pattern at its root; ours always are.
-fn anchored(pattern: &str) -> &str {
+/// Strips the leading `/` or `./` that anchors a gitignore pattern at its root; our
+/// patterns always are, so the prefix carries no information.
+fn without_anchor(pattern: &str) -> &str {
     let pattern = pattern.strip_prefix("./").unwrap_or(pattern);
     pattern.strip_prefix('/').unwrap_or(pattern)
 }
@@ -60,7 +65,7 @@ pub struct CrateDir {
     pub dir: PathBuf,
     /// Extra Paths, rebased so they match paths relative to the workspace root.
     extra_paths: Globs,
-    /// Files inside `dir` that do not count as changes, relative to `dir`.
+    /// Files inside `dir` that do not make the crate a Changed Crate, relative to `dir`.
     ignore: Globs,
 }
 
@@ -78,26 +83,21 @@ impl CrateDir {
     /// Declares the crate's `extra-paths`: globs relative to its own directory, which may
     /// start with `../`, that make it a Changed Crate when matched.
     pub fn extra_paths(mut self, globs: &[String]) -> Result<Self> {
+        let origin = crate_setting(&self.name, "extra-paths");
         let rebased = globs
             .iter()
-            .map(|glob| rebase(&self.dir, glob).with_context(|| self.origin("extra-paths")))
+            .map(|glob| rebase(&self.dir, glob).with_context(|| origin.clone()))
             .collect::<Result<Vec<_>>>()?;
-        self.extra_paths = Globs::new(
-            rebased.iter().map(String::as_str),
-            &self.origin("extra-paths"),
-        )?;
+        self.extra_paths = Globs::new(rebased.iter().map(String::as_str), &origin)?;
         Ok(self)
     }
 
     /// Declares the crate's `ignore`: globs relative to its own directory for files inside
-    /// it that do not count as changes.
+    /// it that do not make it a Changed Crate.
     pub fn ignore(mut self, globs: &[String]) -> Result<Self> {
-        self.ignore = Globs::new(globs.iter().map(String::as_str), &self.origin("ignore"))?;
+        let origin = crate_setting(&self.name, "ignore");
+        self.ignore = Globs::new(globs.iter().map(String::as_str), &origin)?;
         Ok(self)
-    }
-
-    fn origin(&self, setting: &str) -> String {
-        format!("`{setting}` of crate `{}`", self.name)
     }
 
     fn claims_as_extra_path(&self, file: &Path) -> bool {
@@ -124,7 +124,7 @@ fn rebase(dir: &Path, glob: &str) -> Result<String> {
         .components()
         .map(|c| globset::escape(&c.as_os_str().to_string_lossy()))
         .collect();
-    for part in anchored(glob).split('/') {
+    for part in without_anchor(glob).split('/') {
         match part {
             "" | "." => {}
             ".." => {
@@ -146,7 +146,15 @@ pub struct GlobalFiles {
     globs: Globs,
 }
 
+/// Names a crate's setting in error messages, the same way for a wrong type and a bad glob.
+pub fn crate_setting(crate_name: &str, key: &str) -> String {
+    format!("`[package.metadata.affected].{key}` of crate `{crate_name}`")
+}
+
 impl GlobalFiles {
+    /// The setting holding the user's Global File globs, as named in error messages.
+    pub const SETTING: &str = "`[workspace.metadata.affected].global`";
+
     /// Globs every workspace treats as Global Files.
     pub const BUILT_IN: [&str; 5] = [
         "Cargo.toml",
@@ -162,7 +170,7 @@ impl GlobalFiles {
             .iter()
             .copied()
             .chain(user_globs.iter().map(String::as_str));
-        let globs = Globs::new(patterns, "`[workspace.metadata.affected].global`")?;
+        let globs = Globs::new(patterns, Self::SETTING)?;
         Ok(Self { globs })
     }
 
@@ -172,8 +180,9 @@ impl GlobalFiles {
     }
 }
 
-/// Where one file of the Change Set landed. A file claimed by several crates has one
-/// outcome per crate.
+/// Where one file of the Change Set landed; each variant names how it was claimed. A file
+/// claimed by several crates has one outcome per crate. Variants are declared in mapping
+/// order, which `Ord` turns into the order of a file's outcomes within a `Mapping`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Outcome {
     /// Matches a Global File glob; no crate claims it.
@@ -584,7 +593,7 @@ mod tests {
             .unwrap_err();
         let msg = format!("{err:#}");
         assert!(msg.contains("`lib`"), "{msg}");
-        assert!(msg.contains("`ignore`"), "{msg}");
+        assert!(msg.contains("[package.metadata.affected].ignore"), "{msg}");
         assert!(msg.contains("docs/["), "{msg}");
     }
 
