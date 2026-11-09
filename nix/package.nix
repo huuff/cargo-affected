@@ -4,7 +4,7 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "cargo-affected";
+  pname = "haf-cargo-affected";
   version = (lib.importTOML ../Cargo.toml).package.version;
 
   src = lib.cleanSource ../.;

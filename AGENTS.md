@@ -1,6 +1,6 @@
-# cargo-affected
+# haf-cargo-affected
 
-Cargo subcommand that lists workspace crates affected by a change. Rust binary; `src/main.rs` is the entry point.
+Cargo subcommand (installed as `cargo affected`, binary `cargo-affected`) that lists workspace crates affected by a change. Rust binary; `src/main.rs` is the entry point.
 
 ## Working in the repo
 
