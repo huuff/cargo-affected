@@ -26,6 +26,10 @@ pub struct Cli {
     /// Path to the workspace `Cargo.toml`.
     #[arg(long, value_name = "PATH")]
     pub manifest_path: Option<PathBuf>,
+
+    /// Print only the Changed Crates, leaving out crates affected merely as Dependents.
+    #[arg(long)]
+    pub changed_only: bool,
 }
 
 impl Cli {
@@ -43,6 +47,7 @@ impl From<Cli> for Options {
             from: cli.from,
             to: cli.to,
             manifest_path: cli.manifest_path,
+            changed_only: cli.changed_only,
         }
     }
 }

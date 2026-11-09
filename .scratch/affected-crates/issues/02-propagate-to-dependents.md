@@ -4,12 +4,16 @@
 
 **Blocked by:** 01 (Walking skeleton).
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] In a fixture where `app` depends on `core`, editing `core` prints `app` and `core`
-- [ ] Transitive: `app` -> `mid` -> `core`, editing `core` prints all three
-- [ ] A dev-dependency, a build-dependency, an optional dependency behind a disabled feature and a target-specific dependency each propagate affectedness
-- [ ] Editing a non-member path dependency prints the members that depend on it but not the non-member itself
-- [ ] Diamond dependencies report each crate once
-- [ ] `--changed-only` on the transitive fixture prints only `core`
-- [ ] Unit tests cover the closure over a synthetic graph without touching git or Cargo
+- [x] In a fixture where `app` depends on `core`, editing `core` prints `app` and `core`
+- [x] Transitive: `app` -> `mid` -> `core`, editing `core` prints all three
+- [x] A dev-dependency, a build-dependency, an optional dependency behind a disabled feature and a target-specific dependency each propagate affectedness
+- [x] Editing a non-member path dependency prints the members that depend on it but not the non-member itself
+- [x] Diamond dependencies report each crate once
+- [x] `--changed-only` on the transitive fixture prints only `core`
+- [x] Unit tests cover the closure over a synthetic graph without touching git or Cargo
+
+## Comments
+
+- 2026-11-09, agent: implemented. New pure `graph` module (`DependencyGraph::affected` closure, unit-tested over synthetic edges); `Workspace` now loads every path package (members and non-members) and builds edges from the *declared* dependencies in `cargo metadata`, not the feature-resolved graph, so disabled optional and foreign-target dependencies count without `--all-features`. Non-members are mapped and propagate but are filtered from the output. `--changed-only` added. Fixture `tests/fixtures/graph` uses `workspace.exclude` for `vendor/foo` because Cargo auto-adopts in-root path dependencies as members.

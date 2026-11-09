@@ -269,3 +269,51 @@ fn missing_base_ref_is_an_error_naming_the_ref_with_a_fetch_hint() {
     assert!(stderr.contains("fetch"), "{stderr}");
     assert_eq!(out.stdout, b"");
 }
+
+#[test]
+fn editing_a_crate_prints_it_and_its_direct_dependent() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/mid/src/lib.rs", "pub fn mid() { /* edited */ }\n");
+    assert_eq!(lines(&fx.run(&[])), ["app", "mid"]);
+}
+
+#[test]
+fn affectedness_propagates_transitively_and_through_every_dependency_kind() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    // `mid` -> `core` and `app` -> `mid`; the `*-user` crates reach `core` through a
+    // dev-, build-, disabled optional and `cfg(windows)` target dependency respectively.
+    assert_eq!(
+        lines(&fx.run(&[])),
+        [
+            "app",
+            "build-user",
+            "core",
+            "dev-user",
+            "mid",
+            "opt-user",
+            "target-user"
+        ]
+    );
+}
+
+#[test]
+fn editing_a_non_member_path_dependency_prints_its_dependents_but_not_itself() {
+    let fx = Fixture::new("graph", "");
+    fx.write("vendor/foo/src/lib.rs", "pub fn foo() { /* edited */ }\n");
+    assert_eq!(lines(&fx.run(&[])), ["uses-foo"]);
+}
+
+#[test]
+fn a_diamond_reports_each_crate_once() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/base/src/lib.rs", "pub fn base() { /* edited */ }\n");
+    assert_eq!(lines(&fx.run(&[])), ["base", "left", "right", "top"]);
+}
+
+#[test]
+fn changed_only_leaves_out_crates_affected_as_dependents() {
+    let fx = Fixture::new("graph", "");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    assert_eq!(lines(&fx.run(&["--changed-only"])), ["core"]);
+}

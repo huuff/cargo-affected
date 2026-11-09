@@ -1,0 +1,5 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# A path dependency inside the workspace root would otherwise become a member.
+exclude = ["vendor/foo"]

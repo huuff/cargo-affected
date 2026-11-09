@@ -2,9 +2,11 @@
 //!
 //! Vocabulary (see `CONTEXT.md`): the *Change Set* is the set of files git reports as
 //! different between the *Base* and the inspected state; a *Changed Crate* is a workspace
-//! member whose own files appear in the Change Set.
+//! member whose own files appear in the Change Set; an *Affected Crate* is a Changed Crate
+//! or a workspace member that is a *Dependent* of one.
 
 pub mod git;
+pub mod graph;
 pub mod mapping;
 pub mod workspace;
 
@@ -25,10 +27,13 @@ pub struct Options {
     /// Ref of the inspected state; `None` inspects the working tree.
     pub to: Option<String>,
     pub manifest_path: Option<PathBuf>,
+    /// Report only Changed Crates, not the crates affected merely as Dependents.
+    pub changed_only: bool,
 }
 
-/// Names of the Changed Crates, sorted.
-pub fn changed_crates(opts: &Options) -> Result<Vec<String>> {
+/// Names of the Affected Crates that are workspace members, sorted. With
+/// `changed_only`, just the Changed Crates.
+pub fn affected_crates(opts: &Options) -> Result<Vec<String>> {
     let workspace = Workspace::load(opts.manifest_path.as_deref())?;
     let repo = Repo::discover(&workspace.root)?;
     let base = match &opts.from {
@@ -43,7 +48,14 @@ pub fn changed_crates(opts: &Options) -> Result<Vec<String>> {
         .strip_prefix(&repo.root)
         .context("the workspace root is not inside the git repository")?;
     let files = change_set.files_under(workspace_in_repo);
-    Ok(mapping::changed_crates(&workspace.crate_dirs(), files)
+    let changed = mapping::changed_crates(&workspace.crate_dirs(), files);
+    let affected = if opts.changed_only {
+        changed
+    } else {
+        workspace.graph.affected(changed)
+    };
+    Ok(affected
         .into_iter()
+        .filter(|name| workspace.is_member(name))
         .collect())
 }
