@@ -73,3 +73,11 @@ pub struct AffectedCrate {
     /// unless the reason is `dependent`.
     pub via: Vec<String>,
 }
+
+impl AffectedCrate {
+    /// Whether the crate is a Changed Crate: its own files are in the Change Set. This
+    /// holds whatever `reason` reports, since a Global File takes precedence there.
+    pub fn is_changed(&self) -> bool {
+        !self.changed_files.is_empty()
+    }
+}

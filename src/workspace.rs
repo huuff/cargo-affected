@@ -129,6 +129,11 @@ impl Workspace {
         self.packages.iter().find(|p| p.member && p.name == name)
     }
 
+    /// Whether `name` is a workspace member.
+    pub fn is_member(&self, name: &str) -> bool {
+        self.member(name).is_some()
+    }
+
     /// Names of the workspace members.
     pub fn member_names(&self) -> Vec<String> {
         self.packages

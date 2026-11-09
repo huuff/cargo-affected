@@ -1,7 +1,7 @@
 //! Combines Global Files, Changed Crates and the dependency closure into Affected Crates,
 //! each carrying the single reason of highest precedence. Pure: no git, no Cargo.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 
@@ -71,26 +71,54 @@ pub fn via(
         .collect()
 }
 
-/// For every Affected Crate, its direct Dependents that are Affected Crates and satisfy
-/// `include`, sorted by name; crates with none are left out. The inverse of [`via`],
-/// restricted to the crates an output may show.
+/// For every Affected Crate, the nearest Affected Crates downstream of it that `is_shown`
+/// admits, sorted by name; crates with none are left out. These are its affected direct
+/// Dependents, except that a Dependent not shown (a non-member path crate) is looked
+/// through to its own Dependents, so a member reached only through such crates still
+/// hangs under the closest shown one. The inverse of [`via`] for the tree.
 pub fn dependents(
     affected: &BTreeMap<String, Reason>,
     graph: &DependencyGraph,
-    include: impl Fn(&str) -> bool,
+    is_shown: impl Fn(&str) -> bool,
 ) -> BTreeMap<String, Vec<String>> {
     affected
         .keys()
         .map(|name| {
-            let dependents: Vec<String> = graph
-                .dependents(name)
-                .filter(|d| affected.contains_key(*d) && include(d))
-                .map(str::to_string)
-                .collect();
-            (name.clone(), dependents)
+            (
+                name.clone(),
+                shown_dependents(name, affected, graph, &is_shown),
+            )
         })
         .filter(|(_, dependents)| !dependents.is_empty())
         .collect()
+}
+
+fn shown_dependents(
+    name: &str,
+    affected: &BTreeMap<String, Reason>,
+    graph: &DependencyGraph,
+    is_shown: &impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut shown = BTreeSet::new();
+    // Crates looked through already; a cycle through hidden crates would otherwise loop.
+    let mut expanded = BTreeSet::new();
+    let mut pending = vec![name];
+    while let Some(current) = pending.pop() {
+        if !expanded.insert(current) {
+            continue;
+        }
+        for dependent in graph
+            .dependents(current)
+            .filter(|d| affected.contains_key(*d))
+        {
+            if is_shown(dependent) {
+                shown.insert(dependent.to_string());
+            } else {
+                pending.push(dependent);
+            }
+        }
+    }
+    shown.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -214,6 +242,37 @@ mod tests {
             BTreeMap::from([
                 ("foo".to_string(), strings(&["uses-foo"])),
                 ("uses-foo".to_string(), strings(&["app"])),
+            ])
+        );
+    }
+
+    #[test]
+    fn dependents_reaches_through_a_crate_the_filter_hides_to_the_next_one_it_admits() {
+        // `foo` -> `bar` -> `baz`, where `foo` and `bar` are non-members the tree never
+        // shows below a root: `baz` must hang under `foo` rather than vanish.
+        let g = graph(&[("bar", "foo"), ("baz", "bar"), ("uses-foo", "foo")]);
+        let affected = affected_crates([], strings(&["foo"]), &g);
+        let got = dependents(&affected, &g, |name| name != "foo" && name != "bar");
+        assert_eq!(
+            got,
+            BTreeMap::from([
+                ("bar".to_string(), strings(&["baz"])),
+                ("foo".to_string(), strings(&["baz", "uses-foo"])),
+            ])
+        );
+    }
+
+    #[test]
+    fn dependents_terminates_on_a_cycle_through_a_hidden_crate() {
+        // `a` and hidden `n` depend on each other; `a` is reached again through `n`.
+        let g = graph(&[("n", "a"), ("a", "n")]);
+        let affected = affected_crates([], strings(&["a"]), &g);
+        let got = dependents(&affected, &g, |name| name != "n");
+        assert_eq!(
+            got,
+            BTreeMap::from([
+                ("a".to_string(), strings(&["a"])),
+                ("n".to_string(), strings(&["a"])),
             ])
         );
     }

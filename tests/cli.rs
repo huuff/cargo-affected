@@ -697,3 +697,17 @@ fn tree_with_changed_only_prints_only_the_roots() {
         "core\nfoo (non-member)\n"
     );
 }
+
+#[test]
+fn tree_with_changed_only_keeps_every_member_under_a_global_file() {
+    // The members are affected by the Global File itself, not as Dependents, so
+    // `--changed-only` has nothing to remove: the leaves are the roots' whole story.
+    let fx = Fixture::new("basic", "");
+    fx.write(".cargo/config.toml", "[build]\n");
+    assert_eq!(
+        stdout(&fx.run(&["--format", "tree", "--changed-only"])),
+        ".cargo/config.toml\n\
+         ├── a\n\
+         └── b\n"
+    );
+}

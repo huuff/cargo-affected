@@ -93,53 +93,43 @@ fn tree(report: &Report, charset: Charset) -> String {
         shown: BTreeSet::new(),
         out: String::new(),
     };
-    // A member is a Changed Crate when its own files are in the Change Set, whatever
-    // reason precedence reports: a Global File must not hide why its Dependents are in.
+    // A Changed Crate is a root even when a Global File makes its reason `global`: the
+    // file must not hide why the crate's Dependents are affected.
     let mut roots: Vec<Root> = report
         .affected
         .iter()
-        .filter(|c| !c.changed_files.is_empty())
-        .map(|c| Root::Crate {
-            name: &c.name,
-            member: true,
-        })
-        .chain(report.changed_non_members.iter().map(|name| Root::Crate {
-            name,
-            member: false,
-        }))
+        .filter(|c| c.is_changed())
+        .map(|c| Root::Member(&c.name))
         .chain(
             report
-                .global_files
+                .changed_non_members
                 .iter()
-                .map(|path| Root::GlobalFile(path)),
+                .map(|n| Root::NonMember(n)),
         )
+        .chain(report.global_files.iter().map(|p| Root::GlobalFile(p)))
         .collect();
-    roots.sort_by(|a, b| a.name().cmp(&b.name()));
+    roots.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
     for root in roots {
-        match root {
-            Root::Crate { name, member } => {
-                let suffix = if member { "" } else { " (non-member)" };
-                tree.crate_node(name, suffix, "");
-            }
-            Root::GlobalFile(path) => tree.global_file(path),
-        }
+        tree.root(root);
     }
     tree.out
 }
 
 /// A top-level node of the tree.
 enum Root<'a> {
-    /// A Changed Crate; `member` is false for a non-member path crate.
-    Crate { name: &'a str, member: bool },
+    /// A Changed Crate that is a workspace member.
+    Member(&'a str),
+    /// A changed non-member path crate.
+    NonMember(&'a str),
     /// A Global File, relative to the workspace root.
     GlobalFile(&'a Path),
 }
 
 impl Root<'_> {
-    /// What the roots are sorted by: the crate name or the file's path.
-    fn name(&self) -> Cow<'_, str> {
+    /// The crate name or the file's path, which the roots are sorted by.
+    fn sort_key(&self) -> Cow<'_, str> {
         match self {
-            Self::Crate { name, .. } => Cow::Borrowed(name),
+            Self::Member(name) | Self::NonMember(name) => Cow::Borrowed(name),
             Self::GlobalFile(path) => path.to_string_lossy(),
         }
     }
@@ -155,8 +145,16 @@ struct Tree<'a> {
 }
 
 impl Tree<'_> {
-    /// Writes `name` and `suffix` on the current line, then its Dependents indented by
-    /// `prefix`.
+    fn root(&mut self, root: Root) {
+        match root {
+            Root::Member(name) => self.crate_node(name, "", ""),
+            Root::NonMember(name) => self.crate_node(name, " (non-member)", ""),
+            Root::GlobalFile(path) => self.global_file(path),
+        }
+    }
+
+    /// Writes `name` and its label `suffix` on the current line, then its Dependents
+    /// indented by `prefix`.
     fn crate_node(&mut self, name: &str, suffix: &str, prefix: &str) {
         self.out.push_str(name);
         self.out.push_str(suffix);

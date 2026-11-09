@@ -15,6 +15,7 @@ pub mod render;
 pub mod report;
 pub mod workspace;
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -76,15 +77,15 @@ pub fn report(opts: &Options) -> Result<Report> {
     // The tree walks from the roots down to their Dependents; with `changed_only` there
     // is nothing to walk to, and only members are ever shown below a root.
     let dependents = if opts.changed_only {
-        Default::default()
+        BTreeMap::new()
     } else {
         affected::dependents(&affected, &workspace.graph, |name| {
-            workspace.member(name).is_some()
+            workspace.is_member(name)
         })
     };
     let changed_non_members = changed
         .iter()
-        .filter(|name| workspace.member(name).is_none())
+        .filter(|name| !workspace.is_member(name))
         .cloned()
         .collect();
     let members = affected
