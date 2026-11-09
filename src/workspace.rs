@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{fs, io};
 
 use anyhow::{Context, Result, anyhow, bail};
 use cargo_metadata::MetadataCommand;
@@ -70,15 +71,20 @@ impl Workspace {
             .context("canonicalising the workspace root")
     }
 
-    /// Loads the workspace of the given manifest, or of the current directory.
-    pub fn load(manifest_path: Option<&Path>) -> Result<Self> {
+    /// Loads the workspace rooted at `root` (from [`Workspace::locate`]) through
+    /// `cargo metadata` for the given manifest, or the current directory's. `cargo
+    /// metadata` rewrites a stale `Cargo.lock` and creates a missing one; the lockfile at
+    /// `root` is put back exactly as it was, so a run leaves the tree as it found it and
+    /// the next run computes the same Change Set.
+    pub fn load(root: &Path, manifest_path: Option<&Path>) -> Result<Self> {
         let mut cmd = MetadataCommand::new();
         if let Some(path) = manifest_path {
             cmd.manifest_path(path);
         }
-        let metadata = cmd
-            .exec()
-            .context("loading the workspace with `cargo metadata`")?;
+        let lockfile = Lockfile::snapshot(&root.join("Cargo.lock"))?;
+        let metadata = cmd.exec();
+        lockfile.restore()?;
+        let metadata = metadata.context("loading the workspace with `cargo metadata`")?;
         let root = metadata
             .workspace_root
             .canonicalize()
@@ -169,6 +175,43 @@ impl Workspace {
             .filter(|p| p.member)
             .map(|p| p.name.clone())
             .collect()
+    }
+}
+
+/// The bytes of a lockfile, or its absence, taken before `cargo metadata` runs so that
+/// whatever it writes can be undone.
+struct Lockfile {
+    path: PathBuf,
+    contents: Option<Vec<u8>>,
+}
+
+impl Lockfile {
+    fn snapshot(path: &Path) -> Result<Self> {
+        let contents = match fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => {
+                return Err(err).with_context(|| format!("reading {}", path.display()));
+            }
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            contents,
+        })
+    }
+
+    /// Puts the file back as it was, touching it only if `cargo metadata` changed it.
+    fn restore(self) -> Result<()> {
+        let now = Self::snapshot(&self.path)?.contents;
+        if now == self.contents {
+            return Ok(());
+        }
+        match self.contents {
+            Some(bytes) => fs::write(&self.path, bytes)
+                .with_context(|| format!("restoring {}", self.path.display())),
+            None => fs::remove_file(&self.path)
+                .with_context(|| format!("removing {}", self.path.display())),
+        }
     }
 }
 

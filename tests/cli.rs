@@ -866,9 +866,28 @@ fn a_manifest_edit_that_stales_the_lockfile_does_not_turn_the_lockfile_into_a_gl
         "crates/a/Cargo.toml",
         "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nb = { path = \"../b\" }\n",
     );
+    let lockfile = fx.workspace.join("Cargo.lock");
+    let before = fs::read(&lockfile).unwrap();
     let out = fx.run(&["-v"]);
     assert_eq!(lines(&out), ["a"]);
     assert_eq!(stderr(&out), "crates/a/Cargo.toml -> a (crate directory)\n");
+    // The stale lockfile is left exactly as it was, so the next run sees the same tree.
+    assert_eq!(fs::read(&lockfile).unwrap(), before);
+    assert_eq!(lines(&fx.run(&[])), ["a"]);
+}
+
+#[test]
+fn a_run_in_a_repository_without_a_lockfile_leaves_none_behind_and_repeats_identically() {
+    let fx = Fixture::new("graph", "");
+    let lockfile = fx.workspace.join("Cargo.lock");
+    fs::remove_file(&lockfile).unwrap();
+    fx.commit("drop the lockfile");
+    fx.write("crates/core/src/lib.rs", "pub fn core() { /* edited */ }\n");
+    let first = fx.run(&["--changed-only"]);
+    assert_eq!(lines(&first), ["core"]);
+    assert!(!lockfile.exists(), "the run wrote {}", lockfile.display());
+    let second = fx.run(&["--changed-only"]);
+    assert_eq!(lines(&second), lines(&first));
 }
 
 /// The long flags (`--name`) mentioned in `text`, deduplicated. A flag name starts with

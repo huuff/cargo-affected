@@ -438,9 +438,10 @@ prints the crates to test, and an empty output means there is nothing to do.
 
 ## Known behaviours
 
-- `cargo metadata` rewrites a stale `Cargo.lock` on disk as a side effect. The Change Set
-  is computed before the workspace is loaded, so the report is unaffected, but the working
-  tree may differ after a run.
+- `cargo metadata` rewrites a stale `Cargo.lock` and creates a missing one; the tool puts
+  the lockfile back exactly as it found it, so a run leaves the working tree unchanged
+  and a second run reports the same crates. The Change Set is also computed before the
+  workspace is loaded, so the rewrite never shows up in the report.
 - When the workspace sits below the git root, files of the Change Set above the workspace
   root are neither mapped nor listed under `-v`; the mapping and the diagnostics cover the
   files under the workspace root.

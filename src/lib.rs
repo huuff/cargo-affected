@@ -44,7 +44,8 @@ pub struct Options {
 /// crates affected merely as Dependents are left out.
 pub fn report(opts: &Options) -> Result<Report> {
     // The Change Set is computed before the workspace is loaded: `cargo metadata` rewrites
-    // a stale `Cargo.lock`, which must not then show up as a changed Global File.
+    // a stale `Cargo.lock`, which must not then show up as a changed Global File (the
+    // rewrite is undone afterwards, but the order keeps this run honest too).
     let workspace_root = Workspace::locate(opts.manifest_path.as_deref())?;
     let repo = Repo::discover(&workspace_root)?;
     let base = match &opts.from {
@@ -58,7 +59,7 @@ pub fn report(opts: &Options) -> Result<Report> {
     };
     let change_set = repo.change_set(&base, to.commit())?;
 
-    let workspace = Workspace::load(opts.manifest_path.as_deref())?;
+    let workspace = Workspace::load(&workspace_root, opts.manifest_path.as_deref())?;
     let workspace_in_repo = workspace
         .root
         .strip_prefix(&repo.root)
