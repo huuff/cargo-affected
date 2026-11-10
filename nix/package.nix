@@ -18,7 +18,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "Cargo subcommand that lists workspace crates affected by a change";
-    license = lib.licenses.mit;
+    license = lib.licenses.wtfpl;
     mainProgram = "cargo-affected";
   };
 }

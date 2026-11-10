@@ -2,8 +2,13 @@
 name = "haf-cargo-affected"
 version = "0.1.0"
 description = "Cargo subcommand that lists workspace crates affected by a change"
-license = "MIT"
+license = "WTFPL"
 edition = "2024"
+repository = "https://github.com/huuff/cargo-affected"
+readme = "README.md"
+keywords = ["cargo", "subcommand", "workspace", "monorepo", "ci"]
+categories = ["development-tools::cargo-plugins"]
+include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 
 [lib]
 name = "cargo_affected"
