@@ -8,7 +8,7 @@ repository = "https://github.com/huuff/cargo-affected"
 readme = "README.md"
 keywords = ["cargo", "subcommand", "workspace", "monorepo", "ci"]
 categories = ["development-tools::cargo-plugins"]
-include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
 
 [lib]
 name = "cargo_affected"
